@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# local tooling config (machine-specific)
+.mcp.json

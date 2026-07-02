@@ -1,0 +1,258 @@
+/* ---------------------------------------------------------------------------
+ * Global styles + HUD. The HUD DOM itself is built by src/ui/HUD.ts;
+ * everything here is presentation only.
+ * ------------------------------------------------------------------------ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0d08;
+  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  color: #e8e4d4;
+  user-select: none;
+}
+
+#app canvas {
+  display: block;
+}
+
+/* ---- generic HUD panel look ---- */
+.hud {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.hud-panel {
+  background: rgba(12, 14, 8, 0.62);
+  border: 1px solid rgba(190, 180, 140, 0.25);
+  border-radius: 4px;
+  padding: 8px 12px;
+  backdrop-filter: blur(2px);
+}
+
+/* ---- crosshair (camera aim point) ---- */
+#crosshair {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 26px;
+  height: 26px;
+}
+#crosshair::before,
+#crosshair::after {
+  content: '';
+  position: absolute;
+  background: rgba(240, 235, 210, 0.85);
+}
+#crosshair::before {
+  left: 50%;
+  top: 0;
+  width: 1.5px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+#crosshair::after {
+  top: 50%;
+  left: 0;
+  height: 1.5px;
+  width: 100%;
+  transform: translateY(-50%);
+}
+
+/* small circle marking where the GUN is currently pointing (lags the camera) */
+#gun-marker {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 140, 60, 0.9);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.15s;
+}
+
+/* gunner-sight reticle (visible in sight mode only) */
+#sight {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 420px;
+  height: 420px;
+  display: none;
+}
+#sight .ring {
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid rgba(30, 30, 26, 0.9);
+  border-radius: 50%;
+}
+#sight .vline,
+#sight .hline {
+  position: absolute;
+  background: rgba(30, 30, 26, 0.9);
+}
+#sight .vline {
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+#sight .hline {
+  top: 50%;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  transform: translateY(-50%);
+}
+#sight .chevron {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -100%);
+  color: rgba(30, 30, 26, 0.95);
+  font-size: 22px;
+  font-weight: bold;
+}
+
+/* ---- left column: speed / engine ---- */
+#drive-panel {
+  left: 16px;
+  top: 16px;
+  min-width: 170px;
+}
+#drive-panel .big {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+#drive-panel .unit {
+  font-size: 13px;
+  opacity: 0.7;
+}
+.bar {
+  width: 100%;
+  height: 6px;
+  margin-top: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.bar > div {
+  height: 100%;
+  width: 0%;
+  background: #c8b46a;
+  border-radius: 3px;
+}
+
+/* ---- bottom right: ammo / reload ---- */
+#ammo-panel {
+  right: 16px;
+  bottom: 16px;
+  min-width: 210px;
+  text-align: right;
+}
+#ammo-panel .shell-count {
+  font-size: 26px;
+  font-weight: 600;
+}
+#ammo-panel .label {
+  font-size: 12px;
+  opacity: 0.7;
+  letter-spacing: 1px;
+}
+#reload-bar > div {
+  background: #d0703a;
+}
+#ammo-panel .ready {
+  color: #9ed06a;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+
+/* ---- bottom left: minimap ---- */
+#minimap-panel {
+  left: 16px;
+  bottom: 16px;
+  padding: 6px;
+}
+#minimap {
+  display: block;
+  border-radius: 3px;
+}
+#heading {
+  text-align: center;
+  font-size: 12px;
+  margin-top: 4px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- top center: kill ticker ---- */
+#ticker {
+  left: 50%;
+  top: 60px;
+  transform: translateX(-50%);
+  font-size: 18px;
+  font-weight: 600;
+  color: #ffd27a;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+
+/* ---- help overlay ---- */
+#help-panel {
+  right: 16px;
+  top: 16px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  max-width: 300px;
+}
+#help-panel h3 {
+  font-size: 13px;
+  letter-spacing: 2px;
+  margin-bottom: 4px;
+  color: #c8b46a;
+}
+#help-panel kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 0 5px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  font-family: inherit;
+  font-size: 11.5px;
+  text-align: center;
+}
+
+/* ---- click-to-play overlay ---- */
+#lock-hint {
+  left: 50%;
+  top: 62%;
+  transform: translateX(-50%);
+  font-size: 15px;
+  letter-spacing: 1px;
+  background: rgba(12, 14, 8, 0.75);
+  padding: 10px 22px;
+  border-radius: 4px;
+  border: 1px solid rgba(190, 180, 140, 0.35);
+}
+
+/* subtle vignette to sell the period feel */
+#vignette {
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(10, 10, 6, 0.42) 100%);
+  z-index: 5;
+}

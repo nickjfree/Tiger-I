@@ -1,0 +1,22 @@
+{
+  "name": "tiger-tank-sim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Realistic browser-based Tiger I (late production) tank simulator built with Three.js, TypeScript and cannon-es",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "cannon-es": "^0.20.0",
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.169.0",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.0"
+  }
+}
