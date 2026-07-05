@@ -42,9 +42,13 @@ src/
 │  ├─ Input.ts              keyboard / pointer-lock mouse
 │  └─ CameraRig.ts          chase orbit camera + gunner sight mode
 ├─ world/
-│  ├─ Terrain.ts            analytic fBm heightfield + mesh + props
+│  ├─ Terrain.ts            analytic fBm heightfield + mesh
+│  ├─ Props.ts              trees/rocks/bushes/fences/sheds — spatial-hash
+│  │                        indexed, crushable/destructible game objects
+│  ├─ Ground.ts             unified ground sampler (terrain + rock domes) —
+│  │                        suspension & shells ride over obstacles
 │  ├─ Environment.ts        gradient-shader sky, sun/shadows, fog
-│  └─ Targets.ts            practice targets that tip over when hit
+│  └─ Targets.ts            practice targets (shoot them or run them down)
 ├─ tank/
 │  ├─ config.ts             ★ single source of truth for all dimensions
 │  ├─ TankPhysics.ts        cannon-es body + 16-station spring suspension,
@@ -56,7 +60,9 @@ src/
 │  └─ Tank.ts               facade: physics ↔ visuals ↔ effects sync
 ├─ effects/
 │  ├─ Particles.ts          2 pooled Points systems + concrete effects
-│  └─ Projectiles.ts        ballistic shells & bullets, impact handling
+│  ├─ Projectiles.ts        ballistic shells & bullets, impact handling
+│  ├─ Debris.ts             flying wreckage pieces (bounce, rest, fade)
+│  └─ TrackMarks.ts         cleated track imprints left on the ground
 ├─ ui/HUD.ts                speed/ammo panels, minimap, reticles, ticker
 └─ audio/AudioManager.ts    synthesized engine/tracks/cannon/MG audio
 ```

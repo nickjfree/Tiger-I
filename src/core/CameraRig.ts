@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { Input } from './Input';
-import { Terrain } from '../world/Terrain';
+import { GroundLike } from '../world/Ground';
 import { Tank } from '../tank/Tank';
 import { clamp, damp } from '../utils/math';
 
@@ -46,7 +46,7 @@ export class CameraRig {
     this.shake = Math.min(1.5, this.shake + amount);
   }
 
-  update(dt: number, input: Input, tank: Tank, terrain: Terrain): void {
+  update(dt: number, input: Input, tank: Tank, terrain: GroundLike): void {
     // ---- mouse orbit ----
     const look = input.consumeLook();
     const sens = this.sightMode ? SENS * 0.35 : SENS;

@@ -23,7 +23,8 @@ export class Terrain {
   readonly group = new THREE.Group();
 
   private readonly noise: SimplexNoise2D;
-  private readonly rand: () => number;
+  /** Shared seeded RNG, also used by Props so layouts stay deterministic. */
+  readonly rand: () => number;
 
   /** Radius around origin that is flattened for the spawn area. */
   private readonly spawnFlatRadius = 22;
@@ -39,7 +40,6 @@ export class Terrain {
 
     this.mesh = this.buildMesh();
     this.group.add(this.mesh);
-    this.scatterProps();
   }
 
   /* ------------------------------------------------------------------ */
@@ -164,83 +164,4 @@ export class Terrain {
     return tex;
   }
 
-  /* ------------------------------------------------------------------ */
-  /* Scattered props (dead trees, rocks, bushes) — instanced, decorative */
-  /* ------------------------------------------------------------------ */
-
-  private scatterProps(): void {
-    const rand = this.rand;
-    const half = this.size * 0.5 - 20;
-
-    const placements: THREE.Matrix4[] = [];
-    const pick = (count: number, minR: number): THREE.Matrix4[] => {
-      const out: THREE.Matrix4[] = [];
-      let guard = 0;
-      while (out.length < count && guard++ < count * 20) {
-        const x = (rand() * 2 - 1) * half;
-        const z = (rand() * 2 - 1) * half;
-        if (Math.hypot(x, z) < minR) continue;
-        const m = new THREE.Matrix4();
-        const scale = 0.7 + rand() * 0.9;
-        m.compose(
-          new THREE.Vector3(x, this.getHeight(x, z), z),
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rand() * Math.PI * 2, 0)),
-          new THREE.Vector3(scale, scale, scale),
-        );
-        out.push(m);
-      }
-      return out;
-    };
-
-    // Dead trees: bare trunk + a couple of stub branches, merged look via group of 2 instanced meshes
-    const trunkGeo = new THREE.CylinderGeometry(0.14, 0.3, 7, 6);
-    trunkGeo.translate(0, 3.5, 0);
-    const branchGeo = new THREE.CylinderGeometry(0.05, 0.1, 2.6, 5);
-    branchGeo.translate(0, 1.3, 0);
-    branchGeo.rotateZ(0.9);
-    branchGeo.translate(0, 4.4, 0);
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x4a3d2e, roughness: 0.95 });
-
-    const trees = pick(90, 45);
-    const trunks = new THREE.InstancedMesh(trunkGeo, woodMat, trees.length);
-    const branches = new THREE.InstancedMesh(branchGeo, woodMat, trees.length);
-    trees.forEach((m, i) => {
-      trunks.setMatrixAt(i, m);
-      branches.setMatrixAt(i, m);
-    });
-    trunks.castShadow = branches.castShadow = true;
-    this.group.add(trunks, branches);
-
-    // Rocks: distorted icosahedra
-    const rockGeo = new THREE.IcosahedronGeometry(0.8, 1);
-    const rp = rockGeo.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < rp.count; i++) {
-      rp.setXYZ(
-        i,
-        rp.getX(i) * (0.75 + rand() * 0.5),
-        rp.getY(i) * (0.45 + rand() * 0.4),
-        rp.getZ(i) * (0.75 + rand() * 0.5),
-      );
-    }
-    rockGeo.computeVertexNormals();
-    const rockMat = new THREE.MeshStandardMaterial({ color: 0x6e6a60, roughness: 0.9 });
-    const rocks = pick(160, 30);
-    const rocksMesh = new THREE.InstancedMesh(rockGeo, rockMat, rocks.length);
-    rocks.forEach((m, i) => rocksMesh.setMatrixAt(i, m));
-    rocksMesh.castShadow = true;
-    rocksMesh.receiveShadow = true;
-    this.group.add(rocksMesh);
-
-    // Bushes: dark olive blobs
-    const bushGeo = new THREE.IcosahedronGeometry(0.9, 1);
-    bushGeo.scale(1, 0.55, 1);
-    const bushMat = new THREE.MeshStandardMaterial({ color: 0x3d4423, roughness: 1 });
-    const bushes = pick(220, 26);
-    const bushMesh = new THREE.InstancedMesh(bushGeo, bushMat, bushes.length);
-    bushes.forEach((m, i) => bushMesh.setMatrixAt(i, m));
-    bushMesh.castShadow = true;
-    this.group.add(bushMesh);
-
-    void placements;
-  }
 }

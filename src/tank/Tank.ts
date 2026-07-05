@@ -17,7 +17,7 @@ import { TigerModel } from './TigerModel';
 import { Tracks } from './Tracks';
 import { Gun, GunTriggers } from './Gun';
 import { createTankMaterials } from './materials';
-import { Terrain } from '../world/Terrain';
+import { GroundLike } from '../world/Ground';
 import { Particles } from '../effects/Particles';
 import { Projectiles } from '../effects/Projectiles';
 import { AudioManager } from '../audio/AudioManager';
@@ -43,7 +43,7 @@ export class Tank {
 
   constructor(
     scene: THREE.Scene,
-    private readonly terrain: Terrain,
+    private readonly terrain: GroundLike,
     private readonly particles: Particles,
     projectiles: Projectiles,
     audio: AudioManager,
@@ -84,8 +84,9 @@ export class Tank {
       this.wheelYRight.push(TIGER.hardpointY - TIGER.suspensionRest + compR);
     }
 
-    const spinL = -this.distLeft / TIGER.wheelRadius;
-    const spinR = -this.distRight / TIGER.wheelRadius;
+    // rolling constraint: contact point stationary => spin = +distance/r
+    const spinL = this.distLeft / TIGER.wheelRadius;
+    const spinR = this.distRight / TIGER.wheelRadius;
     for (let i = 0; i < nWheels; i++) {
       const wl = this.model.wheelsLeft[i];
       const wr = this.model.wheelsRight[i];
@@ -96,10 +97,10 @@ export class Tank {
     }
     const sprocketR = TIGER.sprocket.r + TIGER.trackThickness / 2;
     const idlerR = TIGER.idler.r + TIGER.trackThickness / 2;
-    this.model.sprockets[0].rotation.x = -this.distLeft / sprocketR;
-    this.model.sprockets[1].rotation.x = -this.distRight / sprocketR;
-    this.model.idlers[0].rotation.x = -this.distLeft / idlerR;
-    this.model.idlers[1].rotation.x = -this.distRight / idlerR;
+    this.model.sprockets[0].rotation.x = this.distLeft / sprocketR;
+    this.model.sprockets[1].rotation.x = this.distRight / sprocketR;
+    this.model.idlers[0].rotation.x = this.distLeft / idlerR;
+    this.model.idlers[1].rotation.x = this.distRight / idlerR;
 
     // 4. tracks conform to the animated wheels and scroll with ground speed
     this.tracks.update(

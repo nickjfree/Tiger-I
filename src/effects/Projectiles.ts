@@ -9,8 +9,9 @@
  * ------------------------------------------------------------------------ */
 
 import * as THREE from 'three';
-import { Terrain } from '../world/Terrain';
+import { GroundLike } from '../world/Ground';
 import { Targets } from '../world/Targets';
+import { Props } from '../world/Props';
 import { Particles } from './Particles';
 
 interface Projectile {
@@ -36,10 +37,16 @@ export class Projectiles {
   /** Hook for camera shake / audio: (position, isShellExplosion). */
   onImpact: ((pos: THREE.Vector3, big: boolean) => void) | null = null;
 
+  /** Hook fired when a projectile strikes a prop (tree/fence/shed). */
+  onPropHit:
+    | ((kind: 'tree' | 'fence' | 'shed', index: number, point: THREE.Vector3, dir: THREE.Vector3, shell: boolean) => void)
+    | null = null;
+
   constructor(
     private readonly scene: THREE.Scene,
-    private readonly terrain: Terrain,
+    private readonly terrain: GroundLike,
     private readonly targets: Targets,
+    private readonly props: Props,
     private readonly particles: Particles,
   ) {
     // elongated tracer along +Z
@@ -103,6 +110,22 @@ export class Projectiles {
         continue;
       }
 
+      // prop hit test (trees / fences / sheds)
+      const propHit = this.props.hitSegment(p.prev, p.pos);
+      if (propHit) {
+        this.dir.copy(p.vel).setY(0).normalize();
+        this.onPropHit?.(propHit.kind, propHit.index, propHit.point, this.dir, p.kind === 'shell');
+        if (p.kind === 'shell' && propHit.kind !== 'shed') {
+          // an 8.8 cm shell snaps a dead tree / fence and keeps flying
+          p.vel.multiplyScalar(0.92);
+        } else {
+          if (p.kind === 'shell') this.impact(p, propHit.point, this.upNormal());
+          else this.particles.bulletImpact(propHit.point);
+          this.remove(i);
+          continue;
+        }
+      }
+
       // terrain hit test: sample along the segment
       const hit = this.terrainHit(p.prev, p.pos);
       if (hit) {
@@ -131,6 +154,7 @@ export class Projectiles {
 
   private readonly tmp = new THREE.Vector3();
   private readonly tmpN = new THREE.Vector3();
+  private readonly dir = new THREE.Vector3();
 
   private upNormal(): THREE.Vector3 {
     return this.tmpN.set(0, 1, 0);

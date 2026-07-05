@@ -102,6 +102,10 @@ export class TigerModel {
     // ---- crew fittings, front ----
     // Driver's visor (left = +X) and hull MG ball mount (right)
     g.add(this.box(0.52, 0.16, 0.08, steel, 0.62, 0.42, 2.7, -0.16));
+    g.add(this.box(0.6, 0.06, 0.06, armor, 0.62, 0.53, 2.69, -0.16)); // visor rain hood
+    const mgCollar = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.035, 10, 20), armor);
+    mgCollar.position.set(-0.62, 0.34, 2.66);
+    g.add(mgCollar);
     const mgBall = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 12), armor);
     mgBall.position.set(-0.62, 0.34, 2.68);
     g.add(mgBall);
@@ -110,6 +114,11 @@ export class TigerModel {
     g.add(mgBarrel);
     this.hullMGMuzzle.position.set(-0.62, 0.34, 3.14);
     g.add(this.hullMGMuzzle);
+
+    // Spare track links racked on the lower nose plate (common field fit)
+    for (let i = 0; i < 4; i++) {
+      g.add(this.box(0.4, 0.36, 0.06, steel, -0.68 + i * 0.45, -0.35, 3.2, 0.26));
+    }
 
     // Headlight (single central Bosch light, late pattern)
     const light = this.disc(0.09, 0.12, steel, 14);
@@ -132,11 +141,14 @@ export class TigerModel {
     const engHatch = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.05, 20), armor);
     engHatch.position.set(0, 0.655, -2.25);
     g.add(engHatch);
-    // Radiator grilles with dark inset tops
+    // Radiator grilles: raised frames with actual slat bars over a dark well
     for (const x of [-1.05, 1.05]) {
       for (const z of [-1.75, -2.75]) {
         g.add(this.box(0.9, 0.07, 0.85, armor, x, 0.66, z));
-        g.add(this.box(0.78, 0.02, 0.73, dark, x, 0.7, z));
+        g.add(this.box(0.78, 0.02, 0.73, dark, x, 0.675, z));
+        for (let s = 0; s < 8; s++) {
+          g.add(this.box(0.78, 0.018, 0.045, steel, x, 0.7, z - 0.33 + s * 0.094));
+        }
       }
     }
 
@@ -148,10 +160,19 @@ export class TigerModel {
     }
 
     // ---- exhausts (two shrouded mufflers on the rear plate) ----
+    const shieldMat = armor.clone();
+    shieldMat.side = THREE.DoubleSide;
     for (const x of [-0.62, 0.62]) {
       const muffler = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.85, 14), steel);
       muffler.position.set(x, 0.5, -3.3);
       g.add(muffler);
+      // sheet-metal heat shield wrapped around the rear half
+      const shield = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.2, 0.2, 0.9, 14, 1, true, Math.PI * 0.65, Math.PI * 0.7),
+        shieldMat,
+      );
+      shield.position.set(x, 0.52, -3.3);
+      g.add(shield);
       const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.18, 10), dark);
       tip.position.set(x, 0.99, -3.3);
       g.add(tip);
@@ -260,113 +281,131 @@ export class TigerModel {
     this.turretPivot.position.set(0, TIGER.hullTopY, TIGER.turretRingZ);
     this.root.add(this.turretPivot);
 
-    // --- horseshoe turret shell (flat front, curved sides/rear) ---
+    // --- horseshoe turret shell -----------------------------------------
+    // Historical basis: the side wall is a single 82 mm band, circular at
+    // the rear and flat at the front; the ball race under it is Ø 2100 mm,
+    // giving an external width of ~2.16 m. Front plate ~100 mm at 5°.
     // Shape is drawn in plan view; shape-Y maps to world −Z after rotation.
     const plan = new THREE.Shape();
-    plan.moveTo(-0.88, -0.95);
-    plan.lineTo(0.88, -0.95);
-    plan.lineTo(0.92, 0.1);
-    plan.absarc(0, 0.1, 0.92, 0, Math.PI, false);
-    plan.lineTo(-0.88, -0.95);
+    plan.moveTo(-0.95, -0.98);
+    plan.lineTo(0.95, -0.98);
+    plan.lineTo(1.08, -0.02);
+    plan.absarc(0, -0.02, 1.08, 0, Math.PI, false);
+    plan.lineTo(-0.95, -0.98);
 
     const shellGeo = new THREE.ExtrudeGeometry(plan, {
-      depth: 0.72,
+      depth: 0.78,
       bevelEnabled: true,
       bevelThickness: 0.03,
       bevelSize: 0.025,
       bevelSegments: 1,
-      curveSegments: 24,
+      curveSegments: 28,
     });
     shellGeo.rotateX(-Math.PI / 2); // extrusion now along +Y, plan −Y → +Z
     const shell = new THREE.Mesh(shellGeo, armor);
-    shell.position.y = 0.0;
     this.turretPivot.add(shell);
 
-    // Turret ring collar under the shell
-    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.92, 0.12, 28), armor);
+    // Turret ring collar (ball race Ø ≈ 2.1 m)
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.12, 32), armor);
     collar.position.y = -0.05;
     this.turretPivot.add(collar);
 
     // --- commander's cupola (late cast pattern, left rear) ---
     const cupola = new THREE.Group();
-    cupola.position.set(0.45, 0.75, -0.4);
-    const cupolaBody = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.38, 0.26, 20), armor);
+    cupola.position.set(0.55, 0.82, -0.45);
+    const cupolaBody = new THREE.Mesh(new THREE.CylinderGeometry(0.37, 0.4, 0.28, 22), armor);
     cupola.add(cupolaBody);
-    const cupolaHatch = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.05, 18), paint);
-    cupolaHatch.position.y = 0.15;
+    const cupolaHatch = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.05, 18), paint);
+    cupolaHatch.position.y = 0.16;
     cupola.add(cupolaHatch);
     for (let i = 0; i < 7; i++) {
       const a = (i / 7) * Math.PI * 2;
-      const scope = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.05), dark);
-      scope.position.set(Math.sin(a) * 0.3, 0.02, Math.cos(a) * 0.3);
+      const scope = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.05), dark);
+      scope.position.set(Math.sin(a) * 0.31, 0.0, Math.cos(a) * 0.31);
       scope.rotation.y = a;
       cupola.add(scope);
     }
     this.turretPivot.add(cupola);
 
     // Loader's hatch (right roof)
-    const loaderHatch = this.box(0.46, 0.05, 0.46, paint, -0.48, 0.74, -0.32);
-    this.turretPivot.add(loaderHatch);
+    this.turretPivot.add(this.box(0.48, 0.05, 0.48, paint, -0.55, 0.8, -0.35));
 
-    // Roof ventilator dome
-    const vent = new THREE.Mesh(new THREE.SphereGeometry(0.14, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), armor);
-    vent.position.set(0, 0.72, 0.25);
+    // Roof ventilator dome + pistol-port plug on the right wall
+    const vent = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), armor);
+    vent.position.set(0, 0.78, 0.3);
     this.turretPivot.add(vent);
 
-    // Rear stowage bin (Rommelkiste)
-    this.turretPivot.add(this.box(1.35, 0.42, 0.42, paint, 0, 0.32, -1.24));
+    // Escape/loading hatch disc on the rear-right wall
+    {
+      const px = -0.92;
+      const pz = -0.6;
+      const phi = Math.atan2(px, pz + 0.02); // radial direction
+      const hatch = this.disc(0.27, 0.06, armor, 20);
+      hatch.position.set(px, 0.4, pz);
+      hatch.rotation.y = phi - Math.PI / 2;
+      this.turretPivot.add(hatch);
+    }
+
+    // Rear stowage bin (Rommelkiste) hugging the turret rear arc
+    this.turretPivot.add(this.box(1.7, 0.46, 0.45, paint, 0, 0.34, -1.33));
+    this.turretPivot.add(this.box(1.7, 0.05, 0.5, paint, 0, 0.6, -1.33));
 
     // Spare track links on the turret sides (late-war field practice)
     for (const side of [1, -1]) {
-      for (const z of [0.25, -0.18]) {
-        this.turretPivot.add(this.box(0.07, 0.42, 0.38, steel, side * 0.94, 0.28, z));
+      for (const z of [0.35, -0.1]) {
+        this.turretPivot.add(this.box(0.07, 0.44, 0.4, steel, side * 1.06, 0.3, z));
       }
     }
 
     // --- gun pivot (trunnions) ---
-    this.gunPivot.position.set(0, 0.36, 0.9);
+    this.gunPivot.position.set(0, 0.37, 0.88);
     this.turretPivot.add(this.gunPivot);
 
-    // Cast mantlet (fixed to the trunnions, elevates with the gun)
-    const mantlet = this.box(1.64, 0.78, 0.24, armor, 0, 0, 0.1);
+    // Mantlet block + production-pattern cylindrical gun sleeve
+    const mantlet = this.box(1.86, 0.8, 0.22, armor, 0, 0, 0.06);
     this.gunPivot.add(mantlet);
+    const sleeve = this.tube(0.13, 0.175, 0.5, armor, 22);
+    sleeve.position.set(0, 0, 0.38);
+    this.gunPivot.add(sleeve);
+
     // Gunner's TZF sight aperture (left of the gun) & coax MG port (right)
     const sightTube = this.tube(0.035, 0.035, 0.3, dark, 10);
-    sightTube.position.set(0.36, 0.2, 0.16);
+    sightTube.position.set(0.4, 0.22, 0.12);
     this.gunPivot.add(sightTube);
-    const coaxTube = this.tube(0.03, 0.03, 0.34, steel, 10);
-    coaxTube.position.set(-0.46, 0.06, 0.2);
+    const coaxTube = this.tube(0.03, 0.03, 0.36, steel, 10);
+    coaxTube.position.set(-0.52, 0.06, 0.16);
     this.gunPivot.add(coaxTube);
-    this.coaxMuzzle.position.set(-0.46, 0.06, 0.4);
+    this.coaxMuzzle.position.set(-0.52, 0.06, 0.36);
     this.gunPivot.add(this.coaxMuzzle);
 
-    // --- 8.8 cm KwK 36 L/56 (recoiling parts) ---
+    // --- 8.8 cm KwK 36 L/56 (recoiling parts) --------------------------
+    // Sized so overall vehicle length ≈ 8.45 m (hull 6.32 m + overhang).
     this.gunPivot.add(this.recoilGroup);
     const sections: Array<[number, number, number, number]> = [
-      // [radius near, radius far, length, z-center]
-      [0.1, 0.095, 0.95, 0.7], // recoil sleeve
-      [0.075, 0.07, 1.9, 2.1], // mid tube
-      [0.062, 0.058, 1.7, 3.9], // outer tube
+      // [radius near(breech side), radius far, length, z-center]
+      [0.115, 0.105, 0.95, 0.68], // outer recoil sleeve
+      [0.1, 0.075, 1.45, 1.88], // tapering mid section
+      [0.072, 0.062, 1.58, 3.39], // outer tube
     ];
     for (const [r1, r2, len, zc] of sections) {
-      const seg = this.tube(r2, r1, len, paint, 18);
+      const seg = this.tube(r2, r1, len, paint, 20);
       seg.position.z = zc;
       this.recoilGroup.add(seg);
     }
-    // Double-baffle muzzle brake
+    // Bulbous double-baffle muzzle brake (Ø ~29 cm)
+    const brakeCore = this.tube(0.068, 0.068, 0.5, paint, 14);
+    brakeCore.position.z = 4.4;
+    this.recoilGroup.add(brakeCore);
     for (const [len, zc] of [
-      [0.18, 4.86],
-      [0.16, 5.08],
+      [0.2, 4.31],
+      [0.18, 4.56],
     ] as Array<[number, number]>) {
-      const baffle = this.tube(0.115, 0.115, len, paint, 16);
+      const baffle = this.tube(0.145, 0.145, len, paint, 18);
       baffle.position.z = zc;
       this.recoilGroup.add(baffle);
     }
-    const brakeCore = this.tube(0.06, 0.06, 0.34, paint, 12);
-    brakeCore.position.z = 4.95;
-    this.recoilGroup.add(brakeCore);
 
-    this.muzzle.position.set(0, 0, 5.18);
+    this.muzzle.position.set(0, 0, 4.68);
     this.recoilGroup.add(this.muzzle);
   }
 }

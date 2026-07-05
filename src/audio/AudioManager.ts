@@ -202,6 +202,21 @@ export class AudioManager {
     this.burst({ duration: 0.9, gain: g, filterType: 'lowpass', freqStart: 900, freqEnd: 90 });
   }
 
+  /** Snapping wood: crushed tree / broken fence. */
+  playWoodCrack(dist: number): void {
+    const g = clamp(18 / Math.max(6, dist), 0.08, 0.5);
+    this.burst({ duration: 0.16, gain: g, filterType: 'lowpass', freqStart: 900, freqEnd: 200 });
+    this.burst({ duration: 0.05, gain: g * 0.8, filterType: 'bandpass', freqStart: 2600, q: 2.5 });
+  }
+
+  /** Collapsing structure: shed smashed by shell or hull. */
+  playCrash(dist: number): void {
+    const g = clamp(26 / Math.max(6, dist), 0.1, 0.65);
+    this.burst({ duration: 0.8, gain: g, filterType: 'lowpass', freqStart: 700, freqEnd: 100 });
+    this.burst({ duration: 0.25, gain: g * 0.7, filterType: 'bandpass', freqStart: 1800, q: 1.5 });
+    this.burst({ duration: 0.12, gain: g * 0.5, filterType: 'bandpass', freqStart: 3200, q: 3 });
+  }
+
   playReloadDone(): void {
     this.burst({ duration: 0.08, gain: 0.18, filterType: 'bandpass', freqStart: 2400, q: 4 });
     setTimeout(() => {

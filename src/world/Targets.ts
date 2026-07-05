@@ -124,6 +124,30 @@ export class Targets {
     return this.targets.map((t) => ({ x: t.center.x, z: t.center.z, alive: t.alive }));
   }
 
+  private readonly tmpLocal = new THREE.Vector3();
+  private readonly tmpInv = new THREE.Quaternion();
+
+  /** Knock over any standing target the tank hull drives into. Returns count. */
+  crushBy(tankPos: THREE.Vector3, tankQuat: THREE.Quaternion): number {
+    let crushed = 0;
+    this.tmpInv.copy(tankQuat).invert();
+    for (const t of this.targets) {
+      if (!t.alive) continue;
+      this.tmpLocal.copy(t.root.position).sub(tankPos).applyQuaternion(this.tmpInv);
+      if (
+        Math.abs(this.tmpLocal.x) < 2.0 &&
+        Math.abs(this.tmpLocal.z) < 3.5 &&
+        Math.abs(this.tmpLocal.y) < 3
+      ) {
+        t.alive = false;
+        this.destroyed++;
+        crushed++;
+        this.onDestroyed?.(this.targets.length - this.destroyed);
+      }
+    }
+    return crushed;
+  }
+
   update(dt: number): void {
     for (const t of this.targets) {
       if (!t.alive && t.fallT < 1) {

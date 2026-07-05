@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { Terrain } from '../world/Terrain';
+import { GroundLike } from '../world/Ground';
 import { TIGER } from './config';
 import { clamp, damp } from '../utils/math';
 
@@ -60,7 +60,7 @@ export class TankPhysics {
   private readonly tmpUp = new CANNON.Vec3();
   private readonly tmpN = new THREE.Vector3();
 
-  constructor(private readonly terrain: Terrain) {
+  constructor(private readonly terrain: GroundLike) {
     this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.81, 0) });
     this.world.allowSleep = false;
 
@@ -142,7 +142,8 @@ export class TankPhysics {
 
       const ground = this.terrain.getHeight(px, pz);
       const dist = py - ground;
-      let comp = TIGER.suspensionRest + TIGER.wheelRadius - dist;
+      // contact radius includes the track shoe the wheel rides on
+      let comp = TIGER.suspensionRest + TIGER.wheelRadius + TIGER.trackShoe - dist;
 
       if (comp <= 0) {
         s.compression = 0;

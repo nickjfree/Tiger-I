@@ -30,6 +30,10 @@ export const TIGER = {
   wheelAxlesZ: [2.31, 1.65, 0.99, 0.33, -0.33, -0.99, -1.65, -2.31],
   hardpointY: -0.4, // suspension attachment height (local Y)
   suspensionRest: 0.5, // rest extension below hardpoint (to wheel center)
+  /** The wheel rides ON the track, so ground contact happens one track-shoe
+   *  below the wheel rim. Without this the links visually sink into the
+   *  terrain. */
+  trackShoe: 0.07,
   suspensionTravel: 0.35, // max compression before bump stop
   springK: 350_000, // N/m per wheel station
   springC: 42_000, // N·s/m per wheel station
