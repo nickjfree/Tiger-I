@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { GroundLike } from '../world/Ground';
-import { TIGER } from './config';
+import { TankSpec } from './config';
 import { clamp, damp } from '../utils/math';
 
 export interface DriveInput {
@@ -60,27 +60,30 @@ export class TankPhysics {
   private readonly tmpUp = new CANNON.Vec3();
   private readonly tmpN = new THREE.Vector3();
 
-  constructor(private readonly terrain: GroundLike) {
+  constructor(
+    private readonly terrain: GroundLike,
+    readonly spec: TankSpec,
+  ) {
     this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.81, 0) });
     this.world.allowSleep = false;
 
     // Box shape only provides sensible inertia — terrain contact is handled
     // by the suspension + belly penalty forces below.
-    const shape = new CANNON.Box(new CANNON.Vec3(1.6, 0.55, 3.0));
+    const shape = new CANNON.Box(new CANNON.Vec3(spec.hitbox.halfW * 0.86, 0.55, spec.hitbox.halfL * 0.95));
     this.body = new CANNON.Body({
-      mass: TIGER.mass,
+      mass: spec.mass,
       shape,
-      position: new CANNON.Vec3(0, terrain.getHeight(0, 0) + TIGER.originHeight + 0.3, 0),
+      position: new CANNON.Vec3(0, terrain.getHeight(0, 0) + spec.originHeight + 0.3, 0),
       linearDamping: 0.02,
       angularDamping: 0.35,
     });
     this.world.addBody(this.body);
 
     for (const side of [1, -1] as const) {
-      for (const z of TIGER.wheelAxlesZ) {
+      for (const z of spec.wheelAxlesZ) {
         this.stations.push({
           side,
-          local: new CANNON.Vec3(side * TIGER.trackCenterX, TIGER.hardpointY, z),
+          local: new CANNON.Vec3(side * spec.trackCenterX, spec.hardpointY, z),
           compression: 0,
           visualCompression: 0.1,
           contact: false,
@@ -121,17 +124,17 @@ export class TankPhysics {
     // ---- commanded track speeds (differential steering) ----
     const base =
       input.throttle >= 0
-        ? input.throttle * TIGER.maxForwardSpeed
-        : input.throttle * TIGER.maxReverseSpeed;
+        ? input.throttle * this.spec.maxForwardSpeed
+        : input.throttle * this.spec.maxReverseSpeed;
     // steering: right turn (steer>0) → left (+X) track speeds up
-    this.targetSpeedLeft = input.brake ? 0 : base + input.steer * TIGER.steerSpeed;
-    this.targetSpeedRight = input.brake ? 0 : base - input.steer * TIGER.steerSpeed;
+    this.targetSpeedLeft = input.brake ? 0 : base + input.steer * this.spec.steerSpeed;
+    this.targetSpeedRight = input.brake ? 0 : base - input.steer * this.spec.steerSpeed;
 
     // ---- actual per-side ground speeds ----
     const vFwd = body.velocity.dot(fwd);
     const yawRate = body.angularVelocity.dot(up);
-    this.trackSpeedLeft = vFwd - yawRate * TIGER.trackCenterX;
-    this.trackSpeedRight = vFwd + yawRate * TIGER.trackCenterX;
+    this.trackSpeedLeft = vFwd - yawRate * this.spec.trackCenterX;
+    this.trackSpeedRight = vFwd + yawRate * this.spec.trackCenterX;
 
     // ---- suspension + traction per station ----
     for (const s of this.stations) {
@@ -143,7 +146,7 @@ export class TankPhysics {
       const ground = this.terrain.getHeight(px, pz);
       const dist = py - ground;
       // contact radius includes the track shoe the wheel rides on
-      let comp = TIGER.suspensionRest + TIGER.wheelRadius + TIGER.trackShoe - dist;
+      let comp = this.spec.suspensionRest + this.spec.wheelRadius + this.spec.trackShoe - dist;
 
       if (comp <= 0) {
         s.compression = 0;
@@ -159,15 +162,15 @@ export class TankPhysics {
       // -- spring / damper along world up --
       let springComp = comp;
       let bumpStop = 0;
-      if (comp > TIGER.suspensionTravel) {
-        bumpStop = (comp - TIGER.suspensionTravel) * TIGER.springK * 8;
-        springComp = TIGER.suspensionTravel;
+      if (comp > this.spec.suspensionTravel) {
+        bumpStop = (comp - this.spec.suspensionTravel) * this.spec.springK * 8;
+        springComp = this.spec.suspensionTravel;
       }
-      let fy = TIGER.springK * springComp + bumpStop - TIGER.springC * this.tmpV.y;
+      let fy = this.spec.springK * springComp + bumpStop - this.spec.springC * this.tmpV.y;
       fy = clamp(fy, 0, 1.4e6);
       this.tmpF.set(0, fy, 0);
       body.applyForce(this.tmpF, this.tmpR);
-      s.compression = Math.min(comp, TIGER.suspensionTravel + 0.1);
+      s.compression = Math.min(comp, this.spec.suspensionTravel + 0.1);
 
       // -- traction in the local ground plane --
       const n = this.terrain.getNormal(px, pz, this.tmpN);
@@ -188,7 +191,7 @@ export class TankPhysics {
       const vLong = this.tmpV.x * fx + this.tmpV.y * fyp + this.tmpV.z * fz;
       const vLat = this.tmpV.x * sx + this.tmpV.y * sy + this.tmpV.z * sz;
 
-      const maxLong = input.brake ? TIGER.brakeTraction : TIGER.maxTraction;
+      const maxLong = input.brake ? this.spec.brakeTraction : this.spec.maxTraction;
 
       // Drive force is split into two controllers:
       //  - common mode: chases the throttle's base speed; limited by engine
@@ -199,18 +202,18 @@ export class TankPhysics {
       //    from the slowed track to the sped-up one, so this part is roughly
       //    power-neutral and is NOT capped by engine power. It also acts as
       //    yaw damping when no steering is commanded.
-      let fBase = clamp(TIGER.driveGain * ((input.brake ? 0 : base) - vFwd), -maxLong, maxLong);
+      let fBase = clamp(this.spec.driveGain * ((input.brake ? 0 : base) - vFwd), -maxLong, maxLong);
       if (fBase * vFwd > 0) {
-        const perStation = TIGER.enginePower / this.stations.length;
+        const perStation = this.spec.enginePower / this.stations.length;
         const powerCap = perStation / Math.max(Math.abs(vFwd), 0.7);
         fBase = clamp(fBase, -powerCap, powerCap);
       }
-      const diffTarget = input.brake ? 0 : s.side * input.steer * TIGER.steerSpeed;
+      const diffTarget = input.brake ? 0 : s.side * input.steer * this.spec.steerSpeed;
       const vDiff = vLong - vFwd; // yaw-induced speed at this station
-      const fSteer = clamp(TIGER.driveGain * (diffTarget - vDiff), -TIGER.maxTraction, TIGER.maxTraction);
+      const fSteer = clamp(this.spec.driveGain * (diffTarget - vDiff), -this.spec.maxTraction, this.spec.maxTraction);
 
       const fLong = clamp(fBase + fSteer, -maxLong, maxLong);
-      const fLat = clamp(-TIGER.lateralGain * vLat, -TIGER.maxLateral, TIGER.maxLateral);
+      const fLat = clamp(-this.spec.lateralGain * vLat, -this.spec.maxLateral, this.spec.maxLateral);
 
       this.tmpF.set(fx * fLong + sx * fLat, fyp * fLong + sy * fLat, fz * fLong + sz * fLat);
       body.applyForce(this.tmpF, this.tmpR);
@@ -219,7 +222,7 @@ export class TankPhysics {
     // ---- belly penalty contacts (nose digging into steep ground) ----
     for (const cx of [-0.95, 0.95]) {
       for (const cz of [-2.6, 2.6]) {
-        this.tmpP.set(cx, TIGER.hullBottomY + 0.05, cz);
+        this.tmpP.set(cx, this.spec.hullBottomY + 0.05, cz);
         q.vmult(this.tmpP, this.tmpR);
         const px = body.position.x + this.tmpR.x;
         const py = body.position.y + this.tmpR.y;
@@ -264,7 +267,7 @@ export class TankPhysics {
     this.body.quaternion.vmult(new CANNON.Vec3(0, 0, 1), fwd);
     const yaw = Math.atan2(fwd.x, fwd.z);
     this.body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), yaw);
-    p.y = this.terrain.getHeight(p.x, p.z) + TIGER.originHeight + 0.6;
+    p.y = this.terrain.getHeight(p.x, p.z) + this.spec.originHeight + 0.6;
     this.body.velocity.setZero();
     this.body.angularVelocity.setZero();
   }

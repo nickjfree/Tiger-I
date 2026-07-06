@@ -1,42 +1,39 @@
 /* ---------------------------------------------------------------------------
- * Segmented caterpillar tracks.
+ * Segmented caterpillar tracks (spec-driven — works for any vehicle).
  *
- * Each side is one InstancedMesh of ~110 individual links placed along a
- * closed path that is rebuilt every frame from the *current* road-wheel
- * heights, so the track visually conforms to terrain exactly like the
- * suspension does:
+ * Each side is one InstancedMesh of individual links placed along a closed
+ * path rebuilt every frame from the *current* road-wheel heights, so the
+ * track visually conforms to terrain exactly like the suspension does:
  *
  *   · bottom run  — hugs the wheel bottoms (terrain-conforming)
- *   · sprocket    — wrap arc at the front drive wheel
- *   · top run     — rides on the wheel tops with catenary-ish sag between
- *   · idler       — wrap arc at the rear
+ *   · front ring  — wrap arc (Tiger: drive sprocket · T-34: idler)
+ *   · top run     — rides on the wheel tops with sag between supports
+ *   · rear ring   — wrap arc (Tiger: idler · T-34: drive sprocket)
  *
  * Links are distributed by arc length and scrolled with the track's actual
- * ground speed, so link spacing stays constant and motion is physically
- * consistent (contact links appear stationary relative to the ground).
+ * ground speed, so contact links appear stationary relative to the ground.
  * ------------------------------------------------------------------------ */
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { TIGER } from './config';
+import { TankSpec, RingSpec } from './config';
 
 interface PathPoint {
   z: number;
   y: number;
 }
 
-const HALF_T = TIGER.trackThickness / 2;
 const WRAP_STEP = (15 * Math.PI) / 180;
 
-/** Single Kgs 63/725/130 link: plate + cleats + central guide horn. */
-function makeLinkGeometry(): THREE.BufferGeometry {
+/** Single track link: plate + cleats + central guide horn. */
+function makeLinkGeometry(spec: TankSpec): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
 
-  const plate = new THREE.BoxGeometry(TIGER.trackWidth - 0.02, 0.045, TIGER.trackLinkPitch - 0.012);
+  const plate = new THREE.BoxGeometry(spec.trackWidth - 0.02, 0.045, spec.trackLinkPitch - 0.012);
   parts.push(plate);
 
-  for (const zc of [-0.035, 0.035]) {
-    const cleat = new THREE.BoxGeometry(TIGER.trackWidth - 0.02, 0.018, 0.028);
+  for (const zc of [-spec.trackLinkPitch * 0.27, spec.trackLinkPitch * 0.27]) {
+    const cleat = new THREE.BoxGeometry(spec.trackWidth - 0.02, 0.018, 0.028);
     cleat.translate(0, 0.031, zc);
     parts.push(cleat);
   }
@@ -63,12 +60,22 @@ class TrackSide {
   private readonly tmpS = new THREE.Vector3(1, 1, 1);
   private readonly xAxis = new THREE.Vector3(1, 0, 0);
 
+  private readonly frontRing: RingSpec;
+  private readonly rearRing: RingSpec;
+  private readonly halfT: number;
+
   constructor(
+    private readonly spec: TankSpec,
     geometry: THREE.BufferGeometry,
     material: THREE.Material,
     private readonly sideX: number,
     linkCount: number,
   ) {
+    // whichever of sprocket/idler sits forward wraps the front of the loop
+    this.frontRing = spec.sprocket.z > 0 ? spec.sprocket : spec.idler;
+    this.rearRing = spec.sprocket.z > 0 ? spec.idler : spec.sprocket;
+    this.halfT = spec.trackThickness / 2;
+
     this.mesh = new THREE.InstancedMesh(geometry, material, linkCount);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.castShadow = true;
@@ -77,45 +84,45 @@ class TrackSide {
   }
 
   /** Rebuild the closed path from current wheel center heights (front→rear). */
-  private buildPath(wheelY: number[]): void {
+  buildPath(wheelY: number[]): void {
     const pts = this.points;
     pts.length = 0;
 
-    const r = TIGER.wheelRadius;
-    const axles = TIGER.wheelAxlesZ;
-    const sp = TIGER.sprocket;
-    const id = TIGER.idler;
-    const spR = sp.r + HALF_T;
-    const idR = id.r + HALF_T;
+    const r = this.spec.wheelRadius;
+    const axles = this.spec.wheelAxlesZ;
+    const fr = this.frontRing;
+    const rr = this.rearRing;
+    const frR = fr.r + this.halfT;
+    const rrR = rr.r + this.halfT;
 
     // -- bottom run: rear wheel → front wheel along the wheel bottoms --
     for (let i = axles.length - 1; i >= 0; i--) {
-      const y = wheelY[i] - r - HALF_T;
+      const y = wheelY[i] - r - this.halfT;
       pts.push({ z: axles[i], y });
       if (i > 0) {
-        const yn = wheelY[i - 1] - r - HALF_T;
+        const yn = wheelY[i - 1] - r - this.halfT;
         pts.push({ z: (axles[i] + axles[i - 1]) / 2, y: Math.min(y, yn) - 0.004 });
       }
     }
 
-    // -- sprocket wrap (front). angle a: -90°=bottom, 0=front, +90°=top --
+    // -- front ring wrap. angle a: -90°=bottom, 0=front, +90°=top --
     for (let a = -Math.PI * 0.55; a <= Math.PI / 2 + 1e-4; a += WRAP_STEP) {
-      pts.push({ z: sp.z + Math.cos(a) * spR, y: sp.y + Math.sin(a) * spR });
+      pts.push({ z: fr.z + Math.cos(a) * frR, y: fr.y + Math.sin(a) * frR });
     }
 
     // -- top run: front wheel top → rear wheel top, with sag between wheels --
     for (let i = 0; i < axles.length; i++) {
-      const y = wheelY[i] + r + HALF_T;
+      const y = wheelY[i] + r + this.halfT;
       pts.push({ z: axles[i], y });
       if (i < axles.length - 1) {
-        const yn = wheelY[i + 1] + r + HALF_T;
+        const yn = wheelY[i + 1] + r + this.halfT;
         pts.push({ z: (axles[i] + axles[i + 1]) / 2, y: (y + yn) / 2 - 0.022 });
       }
     }
 
-    // -- idler wrap (rear): top → rear → bottom --
+    // -- rear ring wrap: top → rear → bottom --
     for (let a = Math.PI / 2; a <= Math.PI * 1.5 + 1e-4; a += WRAP_STEP) {
-      pts.push({ z: id.z - Math.cos(Math.PI - a) * idR, y: id.y + Math.sin(a) * idR });
+      pts.push({ z: rr.z - Math.cos(Math.PI - a) * rrR, y: rr.y + Math.sin(a) * rrR });
     }
 
     // cumulative arc length (closed loop)
@@ -132,11 +139,14 @@ class TrackSide {
     this.totalLen = len;
   }
 
+  get pathLength(): number {
+    return this.totalLen;
+  }
+
   /** Sample position + tangent angle at arc distance s. */
   private sample(s: number, out: { z: number; y: number; ang: number }): void {
     const pts = this.points;
     const cum = this.cumLen;
-    // binary search for the segment containing s
     let lo = 0;
     let hi = cum.length - 1;
     while (lo + 1 < hi) {
@@ -156,8 +166,8 @@ class TrackSide {
   update(dt: number, groundSpeed: number, wheelY: number[]): void {
     this.buildPath(wheelY);
 
-    // When the hull drives forward, ground-contact links stay put in world
-    // space, i.e. they move rearward along the loop (whose bottom run is
+    // Ground-contact links stay put in world space while the hull moves
+    // forward, i.e. they travel rearward along the loop (bottom run is
     // parameterized rear→front) — hence the negative sign.
     this.offset = (((this.offset - groundSpeed * dt) % this.totalLen) + this.totalLen) % this.totalLen;
 
@@ -167,9 +177,7 @@ class TrackSide {
     for (let i = 0; i < n; i++) {
       const s = (this.offset + i * spacing) % this.totalLen;
       this.sample(s, smp);
-      // Rotation about X by −tangentAngle keeps the guide horns facing the
-      // wheels on both the bottom and return runs (see derivation in Git
-      // history / README).
+      // rotation about X by −tangentAngle keeps guide horns facing the wheels
       this.tmpQ.setFromAxisAngle(this.xAxis, -smp.ang);
       this.tmpP.set(this.sideX, smp.y, smp.z);
       this.tmpM.compose(this.tmpP, this.tmpQ, this.tmpS);
@@ -183,28 +191,23 @@ export class Tracks {
   private readonly left: TrackSide;
   private readonly right: TrackSide;
 
-  constructor(parent: THREE.Object3D, material: THREE.Material) {
-    const geo = makeLinkGeometry();
+  constructor(spec: TankSpec, parent: THREE.Object3D, material: THREE.Material) {
+    const geo = makeLinkGeometry(spec);
 
-    // Estimate rest path length to pick a constant link count (~real 96/side)
-    const restY = new Array(TIGER.wheelAxlesZ.length).fill(-0.8);
-    const probe = new TrackSide(geo, material, TIGER.trackCenterX, 8);
-    // @ts-expect-error – reuse private path builder for the initial measure
+    // measure the rest path to pick a constant link count
+    const restY = new Array(spec.wheelAxlesZ.length).fill(
+      spec.hardpointY - spec.suspensionRest + 0.11,
+    );
+    const probe = new TrackSide(spec, geo, material, spec.trackCenterX, 8);
     probe.buildPath(restY);
-    // @ts-expect-error – read measured length
-    const restLen: number = probe.totalLen;
+    const linkCount = Math.round(probe.pathLength / spec.trackLinkPitch);
     probe.mesh.dispose();
 
-    const linkCount = Math.round(restLen / TIGER.trackLinkPitch);
-    this.left = new TrackSide(geo, material, TIGER.trackCenterX, linkCount);
-    this.right = new TrackSide(geo, material, -TIGER.trackCenterX, linkCount);
+    this.left = new TrackSide(spec, geo, material, spec.trackCenterX, linkCount);
+    this.right = new TrackSide(spec, geo, material, -spec.trackCenterX, linkCount);
     parent.add(this.left.mesh, this.right.mesh);
   }
 
-  /**
-   * @param leftSpeed/rightSpeed  actual per-side ground speeds (m/s)
-   * @param wheelYLeft/right      current wheel center heights, hull-local
-   */
   update(
     dt: number,
     leftSpeed: number,

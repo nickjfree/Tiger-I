@@ -26,15 +26,15 @@ export interface TankMaterials {
   wood: THREE.MeshStandardMaterial;
 }
 
-function makeCamoTexture(seed: number): THREE.CanvasTexture {
+function makeCamoTexture(seed: number, scheme: 'german' | 'soviet'): THREE.CanvasTexture {
   const s = 1024;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = s;
   const ctx = canvas.getContext('2d')!;
   const rand = mulberry32(seed);
 
-  // Dunkelgelb base
-  ctx.fillStyle = '#94824f';
+  // Base coat: Dunkelgelb vs Soviet 4BO protective green
+  ctx.fillStyle = scheme === 'german' ? '#94824f' : '#5d6844';
   ctx.fillRect(0, 0, s, s);
 
   // Soft-edged camo blotches drawn as blurred random walks
@@ -58,8 +58,14 @@ function makeCamoTexture(seed: number): THREE.CanvasTexture {
     }
     ctx.restore();
   };
-  paintBlotches('#5c6134', 14, 46); // Olivgrün
-  paintBlotches('#6d4a2c', 10, 40); // Rotbraun
+  if (scheme === 'german') {
+    paintBlotches('#5c6134', 14, 46); // Olivgrün
+    paintBlotches('#6d4a2c', 10, 40); // Rotbraun
+  } else {
+    // 4BO was applied as a solid coat — just tonal variation + fading
+    paintBlotches('#525d3c', 10, 60);
+    paintBlotches('#6a744c', 8, 55);
+  }
 
   // Dust/grime speckle + subtle vertical rain streaks
   const img = ctx.getImageData(0, 0, s, s);
@@ -128,14 +134,33 @@ function makeZimmeritBump(seed: number): THREE.CanvasTexture {
   return tex;
 }
 
-export function createTankMaterials(seed = 77): TankMaterials {
-  const camo = makeCamoTexture(seed);
-  const zimmerit = makeZimmeritBump(seed + 1);
+/** Fine random-noise bump for rough Soviet cast/rolled plate. */
+function makeCastBump(seed: number): THREE.CanvasTexture {
+  const s = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = s;
+  const ctx = canvas.getContext('2d')!;
+  const rand = mulberry32(seed);
+  const img = ctx.createImageData(s, s);
+  for (let i = 0; i < s * s; i++) {
+    const v = 118 + rand() * 20;
+    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+export function createTankMaterials(scheme: 'german' | 'soviet' = 'german', seed = 77): TankMaterials {
+  const camo = makeCamoTexture(seed + (scheme === 'soviet' ? 1000 : 0), scheme);
+  const bump = scheme === 'german' ? makeZimmeritBump(seed + 1) : makeCastBump(seed + 2);
 
   const armor = new THREE.MeshStandardMaterial({
     map: camo,
-    bumpMap: zimmerit,
-    bumpScale: 0.6,
+    bumpMap: bump,
+    bumpScale: scheme === 'german' ? 0.6 : 0.25,
     roughness: 0.82,
     metalness: 0.15,
   });

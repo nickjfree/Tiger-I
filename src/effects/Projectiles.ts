@@ -1,11 +1,10 @@
 /* ---------------------------------------------------------------------------
- * Ballistic projectiles: 8.8 cm shells and MG bullets.
+ * Ballistic projectiles: main-gun shells and MG bullets.
  *
- * Simple but honest exterior ballistics — gravity + slight drag, integrated
- * per frame, with segment tests against the analytic terrain and the practice
- * targets. Shells render as a glowing tracer mesh + smoke trail; impacts
- * trigger the particle explosion, a light flash and a distance-attenuated
- * sound.
+ * Gravity + drag integration per frame, with swept-segment tests against
+ * (in priority order): enemy tanks → practice targets → props → terrain.
+ * Tank hits resolve through the victim's armor model; the shooter is told
+ * the outcome via onTankHit so the HUD can show hit markers.
  * ------------------------------------------------------------------------ */
 
 import * as THREE from 'three';
@@ -13,6 +12,7 @@ import { GroundLike } from '../world/Ground';
 import { Targets } from '../world/Targets';
 import { Props } from '../world/Props';
 import { Particles } from './Particles';
+import type { Tank, ShellMeta, HitResult } from '../tank/Tank';
 
 interface Projectile {
   kind: 'shell' | 'bullet';
@@ -20,8 +20,11 @@ interface Projectile {
   prev: THREE.Vector3;
   vel: THREE.Vector3;
   age: number;
+  dist: number; // flight distance for penetration falloff
   mesh: THREE.Mesh | null;
   trailTimer: number;
+  meta: ShellMeta | null;
+  shooter: Tank | null;
 }
 
 const SHELL_DRAG = 0.012;
@@ -34,12 +37,20 @@ export class Projectiles {
   private readonly flashLight: THREE.PointLight;
   private flashTtl = 0;
 
+  /** Tanks that can be hit (set by Game when a match starts). */
+  readonly tanks: Tank[] = [];
+
   /** Hook for camera shake / audio: (position, isShellExplosion). */
   onImpact: ((pos: THREE.Vector3, big: boolean) => void) | null = null;
 
   /** Hook fired when a projectile strikes a prop (tree/fence/shed). */
   onPropHit:
     | ((kind: 'tree' | 'fence' | 'shed', index: number, point: THREE.Vector3, dir: THREE.Vector3, shell: boolean) => void)
+    | null = null;
+
+  /** Hook fired when a shell strikes a tank. */
+  onTankHit:
+    | ((shooter: Tank | null, victim: Tank, result: HitResult, point: THREE.Vector3) => void)
     | null = null;
 
   constructor(
@@ -49,7 +60,6 @@ export class Projectiles {
     private readonly props: Props,
     private readonly particles: Particles,
   ) {
-    // elongated tracer along +Z
     this.shellGeo = new THREE.CylinderGeometry(0.035, 0.05, 1.1, 8);
     this.shellGeo.rotateX(Math.PI / 2);
     this.shellMat = new THREE.MeshBasicMaterial({ color: 0xffc26a });
@@ -58,7 +68,7 @@ export class Projectiles {
     scene.add(this.flashLight);
   }
 
-  fireShell(pos: THREE.Vector3, dir: THREE.Vector3, speed: number): void {
+  fireShell(pos: THREE.Vector3, dir: THREE.Vector3, speed: number, meta: ShellMeta): void {
     const mesh = new THREE.Mesh(this.shellGeo, this.shellMat);
     mesh.position.copy(pos);
     this.scene.add(mesh);
@@ -68,25 +78,30 @@ export class Projectiles {
       prev: pos.clone(),
       vel: dir.clone().normalize().multiplyScalar(speed),
       age: 0,
+      dist: 0,
       mesh,
       trailTimer: 0,
+      meta,
+      shooter: meta.shooter,
     });
   }
 
-  fireBullet(pos: THREE.Vector3, dir: THREE.Vector3, speed = 320): void {
+  fireBullet(pos: THREE.Vector3, dir: THREE.Vector3, shooter: Tank | null, speed = 320): void {
     this.live.push({
       kind: 'bullet',
       pos: pos.clone(),
       prev: pos.clone(),
       vel: dir.clone().normalize().multiplyScalar(speed),
       age: 0,
+      dist: 0,
       mesh: null,
       trailTimer: 0,
+      meta: null,
+      shooter,
     });
   }
 
   update(dt: number): void {
-    // fading muzzle/impact light
     if (this.flashTtl > 0) {
       this.flashTtl -= dt;
       this.flashLight.intensity = Math.max(0, this.flashTtl * 260);
@@ -97,12 +112,38 @@ export class Projectiles {
       p.age += dt;
       p.prev.copy(p.pos);
 
-      // integrate: gravity + mild aerodynamic drag
       p.vel.y -= 9.81 * dt;
       if (p.kind === 'shell') p.vel.multiplyScalar(1 - SHELL_DRAG * dt);
       p.pos.addScaledVector(p.vel, dt);
+      p.dist += p.prev.distanceTo(p.pos);
 
-      // target hit test on the swept segment
+      // ---- tanks (highest priority) ----
+      let consumed = false;
+      for (const tank of this.tanks) {
+        if (tank === p.shooter) continue;
+        const hit = tank.intersectSegment(p.prev, p.pos);
+        if (!hit) continue;
+
+        if (p.kind === 'shell' && p.meta) {
+          const result = tank.takeHit(p.meta, hit.facet, p.dist);
+          if (result.type === 'penetration') {
+            this.particles.explosion(hit.point, this.upNormal());
+            this.flashLight.position.copy(hit.point);
+            this.flashTtl = 0.1;
+          } else {
+            this.ricochetSparks(hit.point);
+          }
+          this.onTankHit?.(p.shooter, tank, result, hit.point);
+        } else {
+          this.ricochetSparks(hit.point);
+        }
+        this.remove(i);
+        consumed = true;
+        break;
+      }
+      if (consumed) continue;
+
+      // ---- practice targets ----
       const targetHit = this.targets.testSegment(p.prev, p.pos);
       if (targetHit) {
         this.impact(p, targetHit, this.upNormal());
@@ -110,14 +151,13 @@ export class Projectiles {
         continue;
       }
 
-      // prop hit test (trees / fences / sheds)
+      // ---- props (trees / fences / sheds) ----
       const propHit = this.props.hitSegment(p.prev, p.pos);
       if (propHit) {
         this.dir.copy(p.vel).setY(0).normalize();
         this.onPropHit?.(propHit.kind, propHit.index, propHit.point, this.dir, p.kind === 'shell');
         if (p.kind === 'shell' && propHit.kind !== 'shed') {
-          // an 8.8 cm shell snaps a dead tree / fence and keeps flying
-          p.vel.multiplyScalar(0.92);
+          p.vel.multiplyScalar(0.92); // shell snaps a tree/fence and flies on
         } else {
           if (p.kind === 'shell') this.impact(p, propHit.point, this.upNormal());
           else this.particles.bulletImpact(propHit.point);
@@ -126,7 +166,7 @@ export class Projectiles {
         }
       }
 
-      // terrain hit test: sample along the segment
+      // ---- terrain ----
       const hit = this.terrainHit(p.prev, p.pos);
       if (hit) {
         this.impact(p, hit, this.terrain.getNormal(hit.x, hit.z));
@@ -139,7 +179,6 @@ export class Projectiles {
         continue;
       }
 
-      // visuals
       if (p.mesh) {
         p.mesh.position.copy(p.pos);
         p.mesh.lookAt(this.tmp.copy(p.pos).add(p.vel));
@@ -160,6 +199,38 @@ export class Projectiles {
     return this.tmpN.set(0, 1, 0);
   }
 
+  /** Bright spark shower for a non-penetrating hit. */
+  private ricochetSparks(at: THREE.Vector3): void {
+    this.particles.emit({
+      pos: at,
+      vel: new THREE.Vector3(0, 4, 0),
+      velSpread: 7,
+      count: 16,
+      life: [0.15, 0.5],
+      size: [0.1, 0.25],
+      sizeEnd: 0.5,
+      color: 0xffe9a0,
+      colorEnd: 0xff7020,
+      alpha: 1,
+      gravity: 12,
+      drag: 0.5,
+      additive: true,
+    });
+    this.particles.emit({
+      pos: at,
+      vel: new THREE.Vector3(0, 1.5, 0),
+      velSpread: 1,
+      count: 4,
+      life: [0.4, 0.9],
+      size: [0.3, 0.5],
+      sizeEnd: 2.5,
+      color: 0x9a938a,
+      colorEnd: 0x5c5852,
+      alpha: 0.4,
+      drag: 1.5,
+    });
+  }
+
   private terrainHit(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 | null {
     const dist = a.distanceTo(b);
     const steps = Math.max(1, Math.ceil(dist / 1.5));
@@ -169,7 +240,6 @@ export class Projectiles {
       const y = a.y + (b.y - a.y) * t;
       const z = a.z + (b.z - a.z) * t;
       if (y <= this.terrain.getHeight(x, z)) {
-        // refine to the surface
         this.tmp.set(x, this.terrain.getHeight(x, z) + 0.02, z);
         return this.tmp;
       }

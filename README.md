@@ -1,9 +1,26 @@
-# Tiger I Simulator
+# Panzer Duel 1944 — Tiger I vs T-34-85
 
-A realistic, fully procedural browser-based **Tiger I (late production)** tank simulator.
+A realistic, fully procedural browser-based tank duel: **Tiger I (late production)**
+versus **T-34-85**, both historically dimensioned and armored. Pick either tank at
+the start screen — an AI commander takes the other and hunts you. First kill wins.
 Built with **Three.js + TypeScript + Vite**, rigid-body physics via **cannon-es**.
-No downloaded assets — the model, terrain, textures (camouflage, Zimmerit), particles
-and even all audio are generated in code.
+No downloaded assets — models, terrain, textures, particles and all audio are
+generated in code.
+
+## The duel
+
+- **Historical armor model** — every shell resolves against the facet it strikes
+  (glacis / sides / rear / turret) using effective-thickness values and real
+  penetration-vs-range curves (PzGr.39 APCBC, BR-365 APHE). The 88 defeats the
+  T-34 anywhere; the 85 mm bounces off the Tiger's front and mantlet and must
+  close in or flank — exactly the 1944 dynamic.
+- **AI doctrine per tank** — the Tiger AI halts and snipes from range; the
+  T-34 AI keeps moving, circles, and works your flanks. Both use full ballistic
+  firing solutions with target lead, terrain line-of-sight and the same physics,
+  traverse limits and reload times the player has.
+- **Per-tank feel** — 53 km/h vs 40 km/h, diesel clatter vs petrol snarl, gun
+  reports, reload times, turret speeds, gun depression… all from the spec table
+  in `src/tank/config.ts`.
 
 ## Run it
 
@@ -49,11 +66,13 @@ src/
 │  │                        suspension & shells ride over obstacles
 │  ├─ Environment.ts        gradient-shader sky, sun/shadows, fog
 │  └─ Targets.ts            practice targets (shoot them or run them down)
+├─ ai/TankAI.ts             enemy commander: hunt/flank/engage + gunnery
 ├─ tank/
-│  ├─ config.ts             ★ single source of truth for all dimensions
+│  ├─ config.ts             ★ TankSpec table: TIGER + T34 (dims, armor, guns, AI)
 │  ├─ TankPhysics.ts        cannon-es body + 16-station spring suspension,
 │  │                        per-track drive/friction (differential steering)
 │  ├─ TigerModel.ts         procedural late-production Tiger I mesh
+│  ├─ T34Model.ts           procedural T-34-85 mesh (sloped hull, cast turret)
 │  ├─ materials.ts          procedural camo + Zimmerit bump PBR materials
 │  ├─ Tracks.ts             instanced track links on a live, wheel-conforming path
 │  ├─ Gun.ts                turret/gun fire control, recoil, MGs
@@ -63,7 +82,8 @@ src/
 │  ├─ Projectiles.ts        ballistic shells & bullets, impact handling
 │  ├─ Debris.ts             flying wreckage pieces (bounce, rest, fade)
 │  └─ TrackMarks.ts         cleated track imprints left on the ground
-├─ ui/HUD.ts                speed/ammo panels, minimap, reticles, ticker
+├─ ui/HUD.ts                speed/ammo/health, minimap, hitmarkers, banners
+├─ ui/Menu.ts               tank selection screen
 └─ audio/AudioManager.ts    synthesized engine/tracks/cannon/MG audio
 ```
 

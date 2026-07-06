@@ -10,7 +10,6 @@
 
 import * as THREE from 'three';
 import { GroundLike } from '../world/Ground';
-import { TIGER } from '../tank/config';
 import { clamp } from '../utils/math';
 
 const QUADS = 900; // per side ≈ 300 m of trail
@@ -35,7 +34,12 @@ class Ribbon {
   private readonly eL = new THREE.Vector3();
   private readonly eR = new THREE.Vector3();
 
-  constructor(material: THREE.Material, private readonly ground: GroundLike) {
+  constructor(
+    material: THREE.Material,
+    private readonly ground: GroundLike,
+    private readonly trackWidth: number,
+    private readonly linkPitch: number,
+  ) {
     this.pos = new Float32Array(QUADS * 4 * 3);
     this.uv = new Float32Array(QUADS * 4 * 2);
     this.alpha = new Float32Array(QUADS * 4);
@@ -67,7 +71,7 @@ class Ribbon {
   }
 
   stamp(center: THREE.Vector3, right: THREE.Vector3, now: number): void {
-    const halfW = TIGER.trackWidth / 2;
+    const halfW = this.trackWidth / 2;
     this.eL.copy(center).addScaledVector(right, -halfW);
     this.eR.copy(center).addScaledVector(right, halfW);
     this.eL.y = this.ground.getHeight(this.eL.x, this.eL.z) + 0.03;
@@ -104,7 +108,7 @@ class Ribbon {
       base,
     );
     const v0 = this.vCoord;
-    this.vCoord += moved / 0.132; // one cleat per track-link pitch
+    this.vCoord += moved / this.linkPitch; // one cleat per track-link pitch
     const ub = q * 8;
     this.uv.set([0, v0, 1, v0, 0, this.vCoord, 1, this.vCoord], ub);
     this.birth[q] = now;
@@ -140,7 +144,7 @@ export class TrackMarks {
   private time = 0;
   private refadeAcc = 0;
 
-  constructor(scene: THREE.Scene, ground: GroundLike) {
+  constructor(scene: THREE.Scene, ground: GroundLike, trackWidth = 0.725, linkPitch = 0.13) {
     const material = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -174,8 +178,8 @@ export class TrackMarks {
       `,
     });
 
-    this.left = new Ribbon(material, ground);
-    this.right = new Ribbon(material, ground);
+    this.left = new Ribbon(material, ground, trackWidth, linkPitch);
+    this.right = new Ribbon(material, ground, trackWidth, linkPitch);
     scene.add(this.left.mesh, this.right.mesh);
   }
 

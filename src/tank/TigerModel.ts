@@ -17,7 +17,23 @@ import * as THREE from 'three';
 import { TIGER } from './config';
 import { TankMaterials } from './materials';
 
-export class TigerModel {
+/** Structural interface every tank model must satisfy (Tiger, T-34, …). */
+export interface TankModelLike {
+  root: THREE.Group;
+  turretPivot: THREE.Group;
+  gunPivot: THREE.Group;
+  recoilGroup: THREE.Group;
+  muzzle: THREE.Object3D;
+  coaxMuzzle: THREE.Object3D;
+  hullMGMuzzle: THREE.Object3D;
+  exhausts: THREE.Object3D[];
+  wheelsLeft: THREE.Group[];
+  wheelsRight: THREE.Group[];
+  sprockets: THREE.Group[];
+  idlers: THREE.Group[];
+}
+
+export class TigerModel implements TankModelLike {
   readonly root = new THREE.Group();
   readonly turretPivot = new THREE.Group();
   readonly gunPivot = new THREE.Group();

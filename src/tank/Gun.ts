@@ -1,21 +1,18 @@
 /* ---------------------------------------------------------------------------
- * Fire control: turret traverse, gun elevation, the 8.8 cm KwK 36 itself,
- * plus coaxial and hull MG 34s.
- *
- * The turret chases the commander's aim direction (the camera) at a rate
- * limited by the Tiger's hydraulic traverse — you feel the weight. Firing
- * spawns a ballistic shell, muzzle blast particles, barrel recoil and a
- * hull impulse through the physics body.
+ * Fire control: turret traverse, gun elevation, main gun + MGs.
+ * Spec-driven — traverse rates, ballistics, penetration and sound profile
+ * all come from the owning tank's TankSpec.
  * ------------------------------------------------------------------------ */
 
 import * as THREE from 'three';
-import { TIGER } from './config';
-import { TigerModel } from './TigerModel';
+import { TankSpec } from './config';
+import { TankModelLike } from './TigerModel';
 import { TankPhysics } from './TankPhysics';
 import { Projectiles } from '../effects/Projectiles';
 import { Particles } from '../effects/Particles';
 import { AudioManager } from '../audio/AudioManager';
 import { clamp, damp, rotateTowards } from '../utils/math';
+import type { Tank } from './Tank';
 
 export interface GunTriggers {
   fireMain: boolean;
@@ -27,15 +24,21 @@ export class Gun {
   turretYaw = 0; // hull-local
   gunPitch = 0; // positive = elevated
 
-  ammo = TIGER.gun.ammo;
+  ammo: number;
   reload = 0; // seconds until ready
   private recoil = 0;
   private coaxCooldown = 0;
   private hullCooldown = 0;
   private reloadAnnounced = true;
 
-  /** Camera-shake hook, set by Game. */
+  /** Set by Tank so projectiles know who fired (self-hit exclusion, HUD). */
+  owner: Tank | null = null;
+
+  /** Camera-shake hook, set by Game (player tank only). */
   onFired: (() => void) | null = null;
+
+  /** Suppress reload ping for the AI tank. */
+  silentReload = false;
 
   private readonly q = new THREE.Quaternion();
   private readonly aimLocal = new THREE.Vector3();
@@ -43,14 +46,19 @@ export class Gun {
   private readonly muzzleDir = new THREE.Vector3();
 
   constructor(
-    private readonly model: TigerModel,
+    private readonly spec: TankSpec,
+    private readonly model: TankModelLike,
     private readonly physics: TankPhysics,
     private readonly projectiles: Projectiles,
     private readonly particles: Particles,
     private readonly audio: AudioManager,
-  ) {}
+  ) {
+    this.ammo = spec.gun.ammo;
+  }
 
   update(dt: number, aimDirWorld: THREE.Vector3, triggers: GunTriggers): void {
+    const g = this.spec.gun;
+
     // ---- resolve aim into hull space ----
     this.q.set(
       this.physics.body.quaternion.x,
@@ -67,17 +75,17 @@ export class Gun {
     );
 
     // ---- rate-limited traverse & elevation ----
-    this.turretYaw = rotateTowards(this.turretYaw, yawTarget, TIGER.gun.traverseRate * dt);
+    this.turretYaw = rotateTowards(this.turretYaw, yawTarget, g.traverseRate * dt);
     this.gunPitch = rotateTowards(
       this.gunPitch,
-      clamp(pitchTarget, -TIGER.gun.depressionMax, TIGER.gun.elevationMax),
-      TIGER.gun.elevateRate * dt,
+      clamp(pitchTarget, -g.depressionMax, g.elevationMax),
+      g.elevateRate * dt,
     );
 
     this.model.turretPivot.rotation.y = this.turretYaw;
     this.model.gunPivot.rotation.x = -this.gunPitch;
 
-    // ---- recoil recovery (fast kick handled in fire(), slow run-out here) ----
+    // ---- recoil recovery ----
     this.recoil = damp(this.recoil, 0, 3.2, dt);
     this.model.recoilGroup.position.z = -this.recoil;
 
@@ -86,7 +94,7 @@ export class Gun {
       this.reload -= dt;
       if (this.reload <= 0 && !this.reloadAnnounced) {
         this.reloadAnnounced = true;
-        this.audio.playReloadDone();
+        if (!this.silentReload) this.audio.playReloadDone();
       }
     }
 
@@ -95,7 +103,7 @@ export class Gun {
 
     this.coaxCooldown -= dt;
     if (triggers.fireCoax && this.coaxCooldown <= 0) {
-      this.coaxCooldown = 1 / 14; // MG 34 ≈ 850 rpm
+      this.coaxCooldown = 1 / 14;
       this.fireMG(this.model.coaxMuzzle, null);
     }
 
@@ -110,23 +118,28 @@ export class Gun {
 
   private tryFireMain(): void {
     if (this.reload > 0 || this.ammo <= 0) return;
+    const g = this.spec.gun;
 
     this.model.muzzle.getWorldPosition(this.muzzlePos);
     this.model.recoilGroup.getWorldDirection(this.muzzleDir);
 
-    // slight dispersion
     this.muzzleDir.x += (Math.random() - 0.5) * 0.004;
     this.muzzleDir.y += (Math.random() - 0.5) * 0.004;
     this.muzzleDir.normalize();
 
-    this.projectiles.fireShell(this.muzzlePos, this.muzzleDir, TIGER.gun.muzzleVelocity);
+    this.projectiles.fireShell(this.muzzlePos, this.muzzleDir, g.muzzleVelocity, {
+      shooter: this.owner,
+      pen0: g.penetration0,
+      penFalloff: g.penetrationFalloff,
+      damage: g.damage,
+    });
     this.particles.muzzleBlast(this.muzzlePos, this.muzzleDir);
-    this.audio.playCannon();
-    this.physics.applyRecoilImpulse(this.muzzleDir, 34000);
+    this.audio.playCannon(g.sound, this.muzzlePos);
+    this.physics.applyRecoilImpulse(this.muzzleDir, g.recoilImpulse);
 
-    this.recoil = TIGER.gun.recoilDistance;
+    this.recoil = g.recoilDistance;
     this.ammo--;
-    this.reload = TIGER.gun.reloadTime;
+    this.reload = g.reloadTime;
     this.reloadAnnounced = false;
     this.onFired?.();
   }
@@ -142,14 +155,14 @@ export class Gun {
     this.muzzleDir.y += (Math.random() - 0.5) * 0.012;
     this.muzzleDir.normalize();
 
-    this.projectiles.fireBullet(this.muzzlePos, this.muzzleDir);
+    this.projectiles.fireBullet(this.muzzlePos, this.muzzleDir, this.owner);
     this.particles.mgFlash(this.muzzlePos, this.muzzleDir);
-    this.audio.playMG();
+    this.audio.playMG(this.muzzlePos);
   }
 
   /** 0 (just fired) → 1 (ready). */
   get reloadProgress(): number {
-    return 1 - clamp(this.reload / TIGER.gun.reloadTime, 0, 1);
+    return 1 - clamp(this.reload / this.spec.gun.reloadTime, 0, 1);
   }
 
   /** World position the gun currently points at, projected `range` out. */

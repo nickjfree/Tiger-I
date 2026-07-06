@@ -256,3 +256,161 @@ body,
   background: radial-gradient(ellipse at center, transparent 55%, rgba(10, 10, 6, 0.42) 100%);
   z-index: 5;
 }
+
+/* ---- health bars ---- */
+.bar > .hp {
+  background: #7fae5a;
+}
+.bar > .hp.low {
+  background: #cf5a3a;
+}
+.bar > .hp.enemy {
+  background: #cf5a3a;
+}
+#enemy-panel {
+  left: 50%;
+  top: 16px;
+  transform: translateX(-50%);
+  min-width: 200px;
+  display: none;
+}
+
+/* ---- hitmarker / damage feedback ---- */
+#hitmarker {
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+  opacity: 0;
+}
+.hm-penetration {
+  color: #ffb347;
+}
+.hm-ricochet {
+  color: #b8b4a8;
+}
+.hm-kill {
+  color: #ff5040;
+  font-size: 26px;
+}
+#dmg-flash {
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(180, 20, 10, 0.55) 100%);
+  opacity: 0;
+  z-index: 6;
+}
+
+/* ---- victory / defeat banner ---- */
+#banner {
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  display: none;
+  z-index: 20;
+}
+#banner #banner-title {
+  font-size: 54px;
+  font-weight: 800;
+  letter-spacing: 10px;
+  color: #cf5a3a;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+}
+#banner.win #banner-title {
+  color: #9ed06a;
+}
+#banner #banner-sub {
+  font-size: 16px;
+  letter-spacing: 2px;
+  opacity: 0.85;
+  margin-top: 8px;
+}
+
+/* ---- tank selection menu ---- */
+#menu {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 9, 5, 0.78);
+  backdrop-filter: blur(3px);
+  transition: opacity 0.5s;
+}
+#menu.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+#menu-inner {
+  text-align: center;
+  max-width: 860px;
+  padding: 24px;
+}
+#menu h1 {
+  font-size: 34px;
+  letter-spacing: 8px;
+  color: #c8b46a;
+  margin-bottom: 6px;
+}
+.menu-sub {
+  opacity: 0.8;
+  margin-bottom: 26px;
+}
+#menu-cards {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+}
+.card {
+  width: 320px;
+  text-align: left;
+  background: rgba(20, 22, 12, 0.9);
+  border: 1px solid rgba(190, 180, 140, 0.35);
+  border-radius: 6px;
+  padding: 18px 20px;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s, background 0.15s;
+}
+.card:hover {
+  transform: translateY(-4px);
+  border-color: #c8b46a;
+  background: rgba(30, 32, 18, 0.95);
+}
+.card-silhouette {
+  font-size: 30px;
+  letter-spacing: -2px;
+  opacity: 0.5;
+  text-align: center;
+  margin-bottom: 6px;
+}
+.card h2 {
+  font-size: 22px;
+  letter-spacing: 3px;
+  margin-bottom: 2px;
+}
+.card-role {
+  font-size: 12.5px;
+  color: #c8b46a;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+}
+.card ul {
+  list-style: none;
+  font-size: 13px;
+  line-height: 1.9;
+  opacity: 0.9;
+}
+.card ul li::before {
+  content: '▸ ';
+  color: #c8b46a;
+}
+.menu-hint {
+  margin-top: 24px;
+  font-size: 13px;
+  opacity: 0.6;
+  letter-spacing: 1px;
+}

@@ -21,6 +21,9 @@ export interface HUDState {
   locked: boolean;
   muted: boolean;
   targets: Array<{ x: number; z: number; alive: boolean }>;
+  playerHp: number;
+  playerMaxHp: number;
+  enemy: { x: number; z: number; alive: boolean; hp: number; maxHp: number; name: string } | null;
 }
 
 const MAP_SIZE = 168;
@@ -40,6 +43,17 @@ export class HUD {
   private readonly gunMarker: HTMLElement;
   private readonly sightEl: HTMLElement;
   private readonly crosshairEl: HTMLElement;
+
+  private readonly playerHpBar: HTMLElement;
+  private readonly enemyPanel: HTMLElement;
+  private readonly enemyHpBar: HTMLElement;
+  private readonly enemyName: HTMLElement;
+  private readonly hitmarkerEl: HTMLElement;
+  private readonly dmgFlashEl: HTMLElement;
+  private readonly bannerEl: HTMLElement;
+  private hitmarkerTtl = 0;
+  private dmgTtl = 0;
+  private enemyVisibleTtl = 0;
 
   private readonly mapCanvas: HTMLCanvasElement;
   private readonly mapCtx: CanvasRenderingContext2D;
@@ -63,12 +77,26 @@ export class HUD {
 
       <div class="hud hud-panel" id="drive-panel">
         <div><span class="big" id="speed">0</span> <span class="unit">km/h</span></div>
-        <div class="unit">MAYBACH HL230 P45</div>
+        <div class="unit" id="engine-label">MAYBACH HL230 P45</div>
         <div class="bar"><div id="rpm"></div></div>
+        <div class="unit" style="margin-top:6px">PANZERUNG</div>
+        <div class="bar"><div id="player-hp" class="hp"></div></div>
+      </div>
+
+      <div class="hud hud-panel" id="enemy-panel">
+        <div class="label" id="enemy-name">FEIND</div>
+        <div class="bar"><div id="enemy-hp" class="hp enemy"></div></div>
+      </div>
+
+      <div class="hud" id="hitmarker"></div>
+      <div class="hud" id="dmg-flash"></div>
+      <div class="hud" id="banner">
+        <div id="banner-title"></div>
+        <div id="banner-sub"></div>
       </div>
 
       <div class="hud hud-panel" id="ammo-panel">
-        <div class="label">8.8cm KwK 36 L/56 — PzGr.39</div>
+        <div class="label" id="gun-label">8.8cm KwK 36 L/56 — PzGr.39</div>
         <div><span class="shell-count" id="ammo">40</span> <span class="unit">rounds</span></div>
         <div class="bar" id="reload-bar-wrap"><div id="reload-bar"></div></div>
         <div class="ready" id="ready">BEREIT</div>
@@ -83,11 +111,11 @@ export class HUD {
       <div class="hud" id="ticker"></div>
 
       <div class="hud hud-panel" id="help-panel">
-        <h3>TIGER I — CONTROLS</h3>
+        <h3 id="help-title">CONTROLS</h3>
         <div><kbd>W</kbd><kbd>S</kbd> drive · <kbd>A</kbd><kbd>D</kbd> steer tracks</div>
         <div><kbd>X</kbd> brake · <kbd>T</kbd> recover flip</div>
         <div>Mouse — aim turret · Wheel — zoom</div>
-        <div><kbd>LMB</kbd> fire 8.8cm · <kbd>RMB</kbd> gun sight</div>
+        <div><kbd>LMB</kbd> fire main gun · <kbd>RMB</kbd> gun sight</div>
         <div><kbd>Space</kbd> coax MG · <kbd>F</kbd> hull MG</div>
         <div><kbd>M</kbd> mute · <kbd>H</kbd> toggle help</div>
       </div>
@@ -110,6 +138,13 @@ export class HUD {
     this.gunMarker = q('gun-marker');
     this.sightEl = q('sight');
     this.crosshairEl = q('crosshair');
+    this.playerHpBar = q('player-hp');
+    this.enemyPanel = q('enemy-panel');
+    this.enemyHpBar = q('enemy-hp');
+    this.enemyName = q('enemy-name');
+    this.hitmarkerEl = q('hitmarker');
+    this.dmgFlashEl = q('dmg-flash');
+    this.bannerEl = q('banner');
     this.mapCanvas = q('minimap');
     this.mapCtx = this.mapCanvas.getContext('2d')!;
 
@@ -146,6 +181,37 @@ export class HUD {
     return canvas;
   }
 
+  /** Label the HUD for the chosen tank. */
+  setMatchInfo(engineLabel: string, gunLabel: string, enemyName: string, playerName = ''): void {
+    if (playerName) {
+      (this.root.querySelector('#help-title') as HTMLElement).textContent = `${playerName.toUpperCase()} — CONTROLS`;
+    }
+    (this.root.querySelector('#engine-label') as HTMLElement).textContent = engineLabel;
+    (this.root.querySelector('#gun-label') as HTMLElement).textContent = gunLabel;
+    this.enemyName.textContent = enemyName;
+  }
+
+  /** Feedback when the player's shell strikes the enemy. */
+  hitmarker(kind: 'penetration' | 'ricochet' | 'kill'): void {
+    this.hitmarkerTtl = 0.6;
+    this.hitmarkerEl.className = 'hud hm-' + kind;
+    this.hitmarkerEl.textContent =
+      kind === 'kill' ? 'ABSCHUSS!' : kind === 'penetration' ? 'DURCHSCHLAG' : 'ABPRALLER';
+    this.enemyVisibleTtl = 6;
+  }
+
+  /** Red flash when the player is hit. */
+  damageFlash(): void {
+    this.dmgTtl = 0.7;
+  }
+
+  showBanner(title: string, sub: string, win: boolean): void {
+    this.bannerEl.style.display = 'block';
+    this.bannerEl.classList.toggle('win', win);
+    (this.root.querySelector('#banner-title') as HTMLElement).textContent = title;
+    (this.root.querySelector('#banner-sub') as HTMLElement).textContent = sub;
+  }
+
   showMessage(text: string): void {
     this.tickerEl.textContent = text;
     this.tickerEl.style.opacity = '1';
@@ -161,6 +227,28 @@ export class HUD {
     // ---- drive ----
     this.speedEl.textContent = Math.abs(s.speedKmh).toFixed(0);
     this.rpmBar.style.width = `${clamp(20 + s.engineLoad * 80, 0, 100)}%`;
+
+    // ---- health ----
+    const hpFrac = clamp(s.playerHp / s.playerMaxHp, 0, 1);
+    this.playerHpBar.style.width = `${(hpFrac * 100).toFixed(0)}%`;
+    this.playerHpBar.classList.toggle('low', hpFrac < 0.35);
+    if (s.enemy) {
+      this.enemyVisibleTtl -= dt;
+      this.enemyPanel.style.display = this.enemyVisibleTtl > 0 ? 'block' : 'none';
+      this.enemyHpBar.style.width = `${((s.enemy.hp / s.enemy.maxHp) * 100).toFixed(0)}%`;
+    } else {
+      this.enemyPanel.style.display = 'none';
+    }
+
+    // ---- hitmarker / damage flash ----
+    if (this.hitmarkerTtl > 0) {
+      this.hitmarkerTtl -= dt;
+      this.hitmarkerEl.style.opacity = String(clamp(this.hitmarkerTtl / 0.25, 0, 1));
+    }
+    if (this.dmgTtl > 0) {
+      this.dmgTtl -= dt;
+      this.dmgFlashEl.style.opacity = String(clamp(this.dmgTtl, 0, 0.55));
+    }
 
     // ---- ammo / reload ----
     this.ammoEl.textContent = String(s.ammo);
@@ -220,6 +308,17 @@ export class HUD {
       ctx.beginPath();
       ctx.arc(tx, ty, 2.6, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // enemy tank (red diamond)
+    if (s.enemy) {
+      const [ex, ey] = toPx(s.enemy.x, s.enemy.z);
+      ctx.save();
+      ctx.translate(ex, ey);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = s.enemy.alive ? '#ff5040' : '#544f49';
+      ctx.fillRect(-3.4, -3.4, 6.8, 6.8);
+      ctx.restore();
     }
 
     // tank hull triangle + turret line
