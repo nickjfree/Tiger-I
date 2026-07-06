@@ -33,8 +33,10 @@ export class TankAI {
   private stuckTimer = 0;
   private unstickTimer = 0;
   private settleTimer = 0;
+  private flipTimer = 0;
   private orbitSign = Math.random() < 0.5 ? 1 : -1;
   private flankOffset = (Math.random() < 0.5 ? 1 : -1) * (0.5 + Math.random() * 0.4);
+  private readonly upVec = new THREE.Vector3();
 
   private readonly aimDir = new THREE.Vector3(0, 0, 1);
   private readonly cmd: AICommand;
@@ -74,6 +76,21 @@ export class TankAI {
     const dist = Math.hypot(this.toTarget.x, this.toTarget.z);
     const los = this.hasLineOfSight();
 
+    // ---- rollover self-recovery (crew rocks the tank back onto its tracks) ----
+    this.upVec.set(0, 1, 0).applyQuaternion(this.self.model.root.quaternion);
+    if (this.upVec.y < 0.35) {
+      this.flipTimer += dt;
+      cmd.drive.throttle = 0;
+      cmd.drive.steer = 0;
+      cmd.drive.brake = false;
+      if (this.flipTimer > 3) {
+        this.self.physics.resetUpright();
+        this.flipTimer = 0;
+      }
+      return cmd;
+    }
+    this.flipTimer = 0;
+
     /* ---------------- movement ---------------- */
 
     // stuck detection
@@ -99,7 +116,13 @@ export class TankAI {
       }
     } else {
       // pick a movement goal
-      if (dist > ai.engageRange || !los) {
+      if (dist < 45) {
+        // never ram/overlap the target: stand off and keep the gun on it
+        const radial = this.goal.set(this.toTarget.x, 0, this.toTarget.z).normalize();
+        this.goal.copy(this.self.position).addScaledVector(radial, -30);
+        this.driveToward(this.goal, 0.8, cmd.drive);
+        this.state = 'combat';
+      } else if (dist > ai.engageRange || !los) {
         this.state = 'hunt';
         // approach on a flanking bearing while far out
         const f = dist > ai.engageRange * 0.7 ? this.flankOffset : this.flankOffset * 0.3;

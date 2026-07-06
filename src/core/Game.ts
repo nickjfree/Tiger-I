@@ -168,10 +168,25 @@ export class Game {
     this.enemy = new Tank(this.scene, this.ground, this.particles, this.projectiles, this.audio, enemySpec);
     this.projectiles.tanks.push(this.player, this.enemy);
 
-    // spawn the enemy ~380 m out on a random bearing, facing the player
-    const ang = Math.random() * Math.PI * 2;
-    const ex = Math.sin(ang) * 380;
-    const ez = Math.cos(ang) * 380;
+    // spawn the enemy ~380 m out on a random bearing, facing the player —
+    // rejecting spots on steep slopes, rocks or sheds
+    let ang = Math.random() * Math.PI * 2;
+    let ex = Math.sin(ang) * 380;
+    let ez = Math.cos(ang) * 380;
+    for (let tries = 0; tries < 24; tries++) {
+      const a = Math.random() * Math.PI * 2;
+      const x = Math.sin(a) * 380;
+      const z = Math.cos(a) * 380;
+      const flat = this.ground.getNormal(x, z).y > 0.94;
+      const onRock = this.props.rockBumpAt(x, z) > this.terrain.getHeight(x, z) + 0.05;
+      const nearShed = this.props.sheds.some((s) => Math.hypot(s.x - x, s.z - z) < s.radius + 6);
+      if (flat && !onRock && !nearShed) {
+        ang = a;
+        ex = x;
+        ez = z;
+        break;
+      }
+    }
     this.player.placeAt(0, 0, ang, this.ground); // face the threat axis
     this.enemy.placeAt(ex, ez, ang + Math.PI, this.ground);
 
@@ -255,6 +270,7 @@ export class Game {
     enemy.gun.silentReload = true;
 
     // --- interactions & marks for both tanks ---
+    this.separateTanks(player, enemy);
     this.interactProps(player, true);
     this.interactProps(enemy, false);
     if (this.playerMarks) this.updateTrackMarks(player, this.playerMarks, dt);
@@ -386,6 +402,50 @@ export class Game {
       alpha: 0.3,
       drag: 1.5,
     });
+  }
+
+  /**
+   * Tank-vs-tank collision: a firm horizontal push-apart between the hulls
+   * (approximated as circles). Prevents phasing through each other and makes
+   * ramming shove the lighter vehicle.
+   */
+  private separateTanks(a: Tank, b: Tank): void {
+    const ra = (a.spec.hitbox.halfW + a.spec.hitbox.halfL) * 0.52;
+    const rb = (b.spec.hitbox.halfW + b.spec.hitbox.halfL) * 0.52;
+    const dx = b.position.x - a.position.x;
+    const dz = b.position.z - a.position.z;
+    const d = Math.hypot(dx, dz);
+    const overlap = ra + rb - d;
+    if (overlap <= 0 || d < 1e-4) return;
+
+    const nx = dx / d;
+    const nz = dz / d;
+    const ba = a.physics.body;
+    const bb = b.physics.body;
+
+    // stiff spring push applied at the centers (adds no torque). The force
+    // only survives one physics substep (cannon clears it), so it is sized
+    // accordingly; the velocity correction below does the hard stop.
+    const push = overlap * 2e6;
+    ba.force.x -= nx * push;
+    ba.force.z -= nz * push;
+    bb.force.x += nx * push;
+    bb.force.z += nz * push;
+
+    // kill closing velocity along the contact normal (inelastic bump)
+    const rel = (bb.velocity.x - ba.velocity.x) * nx + (bb.velocity.z - ba.velocity.z) * nz;
+    if (rel < 0) {
+      const mSum = ba.mass + bb.mass;
+      const j = (-rel * 0.9 * (ba.mass * bb.mass)) / mSum;
+      ba.velocity.x -= (j / ba.mass) * nx;
+      ba.velocity.z -= (j / ba.mass) * nz;
+      bb.velocity.x += (j / bb.mass) * nx;
+      bb.velocity.z += (j / bb.mass) * nz;
+      if (Math.abs(rel) > 3) {
+        this.audio.playCrash(this.rig.camera.position.distanceTo(a.position));
+        this.rig.addShake(0.3);
+      }
+    }
   }
 
   /** Hull vs standing props: tanks crush what they drive into. */

@@ -163,11 +163,13 @@ export class TankPhysics {
       let springComp = comp;
       let bumpStop = 0;
       if (comp > this.spec.suspensionTravel) {
-        bumpStop = (comp - this.spec.suspensionTravel) * this.spec.springK * 8;
+        bumpStop = (comp - this.spec.suspensionTravel) * this.spec.springK * 6;
         springComp = this.spec.suspensionTravel;
       }
       let fy = this.spec.springK * springComp + bumpStop - this.spec.springC * this.tmpV.y;
-      fy = clamp(fy, 0, 1.4e6);
+      // cap proportional to vehicle weight: a single station may not launch a
+      // light tank into a flip when slamming an obstacle at speed
+      fy = clamp(fy, 0, this.spec.mass * 16);
       this.tmpF.set(0, fy, 0);
       body.applyForce(this.tmpF, this.tmpR);
       s.compression = Math.min(comp, this.spec.suspensionTravel + 0.1);
