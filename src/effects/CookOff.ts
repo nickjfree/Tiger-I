@@ -171,8 +171,11 @@ export class CookOffs {
         }
       }
 
-      if (s.timeLeft <= 0 && (!t || t.landed)) {
-        this.seqs.splice(i, 1); // turret stays where it fell (until respawn)
+      // Pops end after DURATION, but a sequence holding a tossed turret must
+      // survive until stop(key) re-seats it at respawn — otherwise the tank
+      // would come back headless with its turret still lying in the field.
+      if (s.timeLeft <= 0 && !s.turret) {
+        this.seqs.splice(i, 1);
       }
     }
   }
