@@ -28,7 +28,7 @@ import { NetClient } from '../net/NetClient';
 import { RemoteTank } from '../net/RemoteTank';
 import {
   ServerMsg, RosterEntry, PropEvent, TankId,
-  PROTOCOL_VERSION, MAX_PLAYERS, CLIENT_STATE_HZ, INTERP_DELAY_MS, vec3, quat,
+  PROTOCOL_VERSION, MAX_PLAYERS, CLIENT_STATE_HZ, INTERP_DELAY_MS, RESPAWN_SECONDS, vec3, quat,
 } from '../net/protocol';
 import { AudioManager } from '../audio/AudioManager';
 import { clamp } from '../utils/math';
@@ -744,7 +744,7 @@ export class Game {
             this.audio.playExplosion(p.position);
             this.cookoffs.start(this.netId, p.model.root, p.model.turretPivot, p.spec, msg.damage % 2 === 0);
             this.wrecks.push({ tank: p, acc: 0, id: this.netId });
-            this.respawnAtLocal = performance.now() + 5000;
+            this.respawnAtLocal = performance.now() + RESPAWN_SECONDS * 1000;
           }
         } else {
           const r = this.remotes.get(msg.target);

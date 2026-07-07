@@ -14,6 +14,9 @@ export const SNAPSHOT_HZ = 20;
 export const CLIENT_STATE_HZ = 20;
 /** Remote tanks render this far in the past to interpolate between snapshots. */
 export const INTERP_DELAY_MS = 130;
+/** Long enough to watch the full ammunition cook-off (~8.5 s) burn out. */
+export const RESPAWN_SECONDS = 12;
+export const AI_RESPAWN_SECONDS = 15;
 
 export type TankId = 'tiger' | 't34';
 

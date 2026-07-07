@@ -18,14 +18,14 @@ import { SPECS, TankSpec } from '../src/tank/config';
 import { intersectTankSegment, resolvePenetration, HitFacet } from '../src/sim/hittest';
 import {
   ClientMsg, ServerMsg, EntityState, RosterEntry, PropEvent,
-  MAX_PLAYERS, PROTOCOL_VERSION, vec3, quat,
+  MAX_PLAYERS, PROTOCOL_VERSION, RESPAWN_SECONDS, AI_RESPAWN_SECONDS, vec3, quat,
 } from '../src/net/protocol';
 import { HeadlessTank } from './HeadlessTank';
 
 const TICK_HZ = 30;
 const SNAP_HZ = 20;
-const RESPAWN_S = 5;
-const AI_RESPAWN_S = 8;
+const RESPAWN_S = RESPAWN_SECONDS;
+const AI_RESPAWN_S = AI_RESPAWN_SECONDS;
 const AI_ID = 'ai';
 
 interface PlayerConn {
