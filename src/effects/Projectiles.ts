@@ -13,6 +13,14 @@ import { Targets } from '../world/Targets';
 import { Props } from '../world/Props';
 import { Particles } from './Particles';
 import type { Tank, ShellMeta, HitResult } from '../tank/Tank';
+import type { HitFacet } from '../sim/hittest';
+
+/** Anything shells can strike: local Tanks and remote network ghosts. */
+export interface Hittable {
+  intersectSegment(a: THREE.Vector3, b: THREE.Vector3): { point: THREE.Vector3; facet: HitFacet } | null;
+  /** Set on remote ghosts — hits become network claims instead of local damage. */
+  netId?: string;
+}
 
 interface Projectile {
   kind: 'shell' | 'bullet';
@@ -37,8 +45,8 @@ export class Projectiles {
   private readonly flashLight: THREE.PointLight;
   private flashTtl = 0;
 
-  /** Tanks that can be hit (set by Game when a match starts). */
-  readonly tanks: Tank[] = [];
+  /** Tanks/ghosts that can be hit (set by Game when a match starts). */
+  readonly tanks: Hittable[] = [];
 
   /** Hook for camera shake / audio: (position, isShellExplosion). */
   onImpact: ((pos: THREE.Vector3, big: boolean) => void) | null = null;
@@ -48,9 +56,19 @@ export class Projectiles {
     | ((kind: 'tree' | 'fence' | 'shed', index: number, point: THREE.Vector3, dir: THREE.Vector3, shell: boolean) => void)
     | null = null;
 
-  /** Hook fired when a shell strikes a tank. */
+  /** Hook fired when a shell strikes a local tank (singleplayer damage). */
   onTankHit:
     | ((shooter: Tank | null, victim: Tank, result: HitResult, point: THREE.Vector3) => void)
+    | null = null;
+
+  /** Hook fired when the local player's shell strikes a remote ghost. */
+  onNetHit:
+    | ((targetNetId: string, facet: HitFacet, flightDist: number, point: THREE.Vector3) => void)
+    | null = null;
+
+  /** Hook fired whenever the local player fires a shell (for broadcasting). */
+  onShellFired:
+    | ((pos: THREE.Vector3, dir: THREE.Vector3, speed: number, shooter: Tank | null) => void)
     | null = null;
 
   constructor(
@@ -83,6 +101,30 @@ export class Projectiles {
       trailTimer: 0,
       meta,
       shooter: meta.shooter,
+    });
+    this.onShellFired?.(pos, dir, speed, meta.shooter);
+  }
+
+  /**
+   * Cosmetic shell for rounds fired by REMOTE players / the server AI:
+   * full tracer + trail + terrain/prop explosion visuals, but no damage and
+   * no hit reporting (the authoritative result arrives over the network).
+   */
+  fireShellVisual(pos: THREE.Vector3, dir: THREE.Vector3, speed: number): void {
+    const mesh = new THREE.Mesh(this.shellGeo, this.shellMat);
+    mesh.position.copy(pos);
+    this.scene.add(mesh);
+    this.live.push({
+      kind: 'shell',
+      pos: pos.clone(),
+      prev: pos.clone(),
+      vel: dir.clone().normalize().multiplyScalar(speed),
+      age: 0,
+      dist: 0,
+      mesh,
+      trailTimer: 0,
+      meta: null,
+      shooter: null,
     });
   }
 
@@ -120,12 +162,17 @@ export class Projectiles {
       // ---- tanks (highest priority) ----
       let consumed = false;
       for (const tank of this.tanks) {
-        if (tank === p.shooter) continue;
+        if ((tank as unknown) === (p.shooter as unknown)) continue;
         const hit = tank.intersectSegment(p.prev, p.pos);
         if (!hit) continue;
 
-        if (p.kind === 'shell' && p.meta) {
-          const result = tank.takeHit(p.meta, hit.facet, p.dist);
+        if (p.kind === 'shell' && p.meta && tank.netId !== undefined) {
+          // multiplayer: report the claim; server broadcasts the verdict
+          this.ricochetSparks(hit.point);
+          this.onNetHit?.(tank.netId, hit.facet, p.dist, hit.point);
+        } else if (p.kind === 'shell' && p.meta) {
+          const victim = tank as Tank;
+          const result = victim.takeHit(p.meta, hit.facet, p.dist);
           if (result.type === 'penetration') {
             this.particles.explosion(hit.point, this.upNormal());
             this.flashLight.position.copy(hit.point);
@@ -133,7 +180,7 @@ export class Projectiles {
           } else {
             this.ricochetSparks(hit.point);
           }
-          this.onTankHit?.(p.shooter, tank, result, hit.point);
+          this.onTankHit?.(p.shooter, victim, result, hit.point);
         } else {
           this.ricochetSparks(hit.point);
         }

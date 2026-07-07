@@ -36,8 +36,8 @@ export class Input {
       this.keys.add(e.code);
       this.pressed.add(e.code);
       this.noteInteraction();
-      // avoid page scroll on space
-      if (e.code === 'Space') e.preventDefault();
+      // avoid page scroll on Space / focus change on Tab (scoreboard key)
+      if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());

@@ -21,14 +21,21 @@ import { TrackMarks } from '../effects/TrackMarks';
 import { Tank } from '../tank/Tank';
 import { TankSpec, SPECS } from '../tank/config';
 import { TankAI } from '../ai/TankAI';
-import { HUD } from '../ui/HUD';
-import { Menu } from '../ui/Menu';
+import { HUD, ScoreRow } from '../ui/HUD';
+import { Menu, MenuChoice } from '../ui/Menu';
+import { NetClient } from '../net/NetClient';
+import { RemoteTank } from '../net/RemoteTank';
+import {
+  ServerMsg, RosterEntry, PropEvent, TankId,
+  PROTOCOL_VERSION, MAX_PLAYERS, CLIENT_STATE_HZ, INTERP_DELAY_MS, vec3, quat,
+} from '../net/protocol';
 import { AudioManager } from '../audio/AudioManager';
 import { clamp } from '../utils/math';
 
 interface BurningWreck {
-  tank: Tank;
+  tank: { position: THREE.Vector3 };
   acc: number;
+  id?: string; // net id, so a respawn can stop the fire
 }
 
 export class Game {
@@ -57,6 +64,18 @@ export class Game {
   private enemyMarks: TrackMarks | null = null;
   private matchOver = false;
   private readonly wrecks: BurningWreck[] = [];
+
+  // multiplayer state
+  private netMode = false;
+  private net: NetClient | null = null;
+  private netId = '';
+  private readonly remotes = new Map<string, RemoteTank>();
+  private readonly remoteMarks = new Map<string, TrackMarks>();
+  private readonly names = new Map<string, string>();
+  private readonly scoreRows = new Map<string, { name: string; tank: string; kills: number; deaths: number; ai: boolean; alive: boolean }>();
+  private respawnAtLocal = 0;
+  private stateAcc = 0;
+  private menu!: Menu;
 
   private idleAngle = 0;
 
@@ -94,7 +113,10 @@ export class Game {
     this.projectiles = new Projectiles(this.scene, this.ground, this.targets, this.props, this.particles);
 
     this.hud = new HUD(container, this.terrain);
-    new Menu(container, (spec) => this.startMatch(spec));
+    this.menu = new Menu(container, (choice: MenuChoice) => {
+      if (choice.mode === 'sp') this.startMatch(choice.spec);
+      else this.startNetMatch(choice.spec, choice.name);
+    });
 
     // --- world event wiring (match-independent) ---
     this.projectiles.onImpact = (pos, big) => {
@@ -121,6 +143,7 @@ export class Game {
         this.splinters(point);
         this.audio.playCrash(dist);
       }
+      this.sendProp(kind, index, dir.x, dir.z);
     };
     this.projectiles.onTankHit = (shooter, victim, result, point) => {
       // sound
@@ -235,6 +258,11 @@ export class Game {
     if (this.input.wasPressed('KeyH')) this.hud.toggleHelp();
     if (this.input.wasPressed('KeyR') && this.matchOver) window.location.reload();
 
+    if (this.netMode) {
+      if (this.player) this.netFrame(dt);
+      else this.idleFrame(dt);
+      return;
+    }
     if (!this.player || !this.enemy) {
       this.idleFrame(dt);
       return;
@@ -470,6 +498,7 @@ export class Game {
         this.props.fellTree(i, this.tmpV3.x, this.tmpV3.z);
         this.splinters(this.tmpV2.set(t.x, t.y + 0.6, t.z));
         this.audio.playWoodCrack(camDist);
+        if (isPlayer) this.sendProp('tree', i, this.tmpV3.x, this.tmpV3.z);
         if (isPlayer) this.rig.addShake(0.12);
         body.velocity.x *= 0.96;
         body.velocity.z *= 0.96;
@@ -483,6 +512,7 @@ export class Game {
         this.props.breakFence(i, this.tmpV3.x, this.tmpV3.z);
         this.splinters(this.tmpV2.set(f.x, f.y + 0.7, f.z));
         this.audio.playWoodCrack(camDist);
+        if (isPlayer) this.sendProp('fence', i, this.tmpV3.x, this.tmpV3.z);
       }
     }
 
@@ -497,6 +527,7 @@ export class Game {
         }
         this.splinters(this.tmpV2);
         this.audio.playCrash(camDist);
+        if (isPlayer) this.sendProp('shed', i, this.tmpV3.x, this.tmpV3.z);
         if (isPlayer) this.rig.addShake(0.3);
         body.velocity.x *= 0.9;
         body.velocity.z *= 0.9;
@@ -522,6 +553,456 @@ export class Game {
     this.tmpV3.y = 0;
     this.tmpV3.normalize();
     marks.update(dt, onL, centerL, onR, centerR, this.tmpV3);
+  }
+
+
+  /* ------------------------------------------------------------------ */
+  /* multiplayer                                                         */
+  /* ------------------------------------------------------------------ */
+
+  private startNetMatch(spec: TankSpec, name: string): void {
+    this.audio.start();
+    this.audio.configurePlayerEngine(spec.engineAudio);
+    this.audio.configureEnemyEngine((spec.id === 'tiger' ? SPECS.t34 : SPECS.tiger).engineAudio);
+
+    this.netMode = true;
+    this.player = new Tank(this.scene, this.ground, this.particles, this.projectiles, this.audio, spec);
+    this.projectiles.tanks.push(this.player);
+    this.playerMarks = new TrackMarks(this.scene, this.ground, spec.trackWidth, spec.trackLinkPitch);
+
+    this.hud.setMatchInfo(
+      spec.id === 'tiger' ? 'MAYBACH HL230 P45' : 'V-2-34 DIESEL',
+      spec.gun.label,
+      'FEIND',
+      spec.displayName,
+    );
+    this.hud.setOnlineCount('CONNECTING…');
+
+    // network hooks
+    this.projectiles.onShellFired = (pos, dir, speed, shooter) => {
+      if (shooter === this.player) {
+        this.net?.send({ t: 'fire', p: vec3(pos), d: vec3(dir), mv: speed });
+      }
+    };
+    this.projectiles.onNetHit = (targetId, facet, dist, point) => {
+      this.net?.send({ t: 'claim', target: targetId, facet, dist: Math.round(dist), point: vec3(point) });
+    };
+
+    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+    this.net = new NetClient();
+    this.net.onMessage = (msg) => this.handleNet(msg);
+    this.net.onClose = () => {
+      if (!this.matchOver) {
+        this.hud.showBanner('CONNECTION LOST', 'press R to return to the menu', false);
+        this.matchOver = true;
+      }
+    };
+    this.net.connect(url);
+    // greet once the socket opens (NetClient buffers nothing — poll until open)
+    const hello = setInterval(() => {
+      if (this.net?.connected) {
+        this.net.send({ t: 'hello', v: PROTOCOL_VERSION, name, tank: spec.id });
+        clearInterval(hello);
+      }
+    }, 100);
+  }
+
+  private sendProp(kind: 'tree' | 'fence' | 'shed', index: number, dx: number, dz: number): void {
+    if (this.netMode) this.net?.send({ t: 'prop', kind, index, dx: +dx.toFixed(3), dz: +dz.toFixed(3) });
+  }
+
+  private addRemote(entry: RosterEntry): void {
+    const existing = this.remotes.get(entry.id);
+    if (existing) {
+      existing.dispose(this.scene);
+      this.remotes.delete(entry.id);
+    }
+    const r = new RemoteTank(this.scene, entry.id, entry.name, entry.tank, this.particles);
+    r.hp = entry.hp;
+    r.push(0, entry.state);
+    if (!entry.alive) r.setDestroyed(true);
+    this.remotes.set(entry.id, r);
+    this.projectiles.tanks.push(r);
+    if (!this.remoteMarks.has(entry.id)) {
+      this.remoteMarks.set(
+        entry.id,
+        new TrackMarks(this.scene, this.ground, r.spec.trackWidth, r.spec.trackLinkPitch),
+      );
+    }
+    this.names.set(entry.id, entry.name);
+    this.scoreRows.set(entry.id, {
+      name: entry.name,
+      tank: r.spec.displayName,
+      kills: entry.kills,
+      deaths: entry.deaths,
+      ai: entry.ai,
+      alive: entry.alive,
+    });
+  }
+
+  private removeRemote(id: string): void {
+    const r = this.remotes.get(id);
+    if (!r) return;
+    r.dispose(this.scene);
+    this.remotes.delete(id);
+    const idx = this.projectiles.tanks.indexOf(r);
+    if (idx >= 0) this.projectiles.tanks.splice(idx, 1);
+    this.scoreRows.delete(id);
+  }
+
+  private handleNet(msg: ServerMsg): void {
+    switch (msg.t) {
+      case 'full':
+        this.hud.showBanner('ROOM FULL', '8 commanders already in battle — press R to retry', false);
+        this.matchOver = true;
+        break;
+
+      case 'welcome': {
+        this.netId = msg.id;
+        this.names.set(msg.id, 'You');
+        this.player!.placeAt(msg.spawn.x, msg.spawn.z, msg.spawn.yaw, this.ground);
+        this.scoreRows.set(msg.id, {
+          name: 'You',
+          tank: this.player!.spec.displayName,
+          kills: 0,
+          deaths: 0,
+          ai: false,
+          alive: true,
+        });
+        for (const entry of msg.roster) {
+          if (entry.id === msg.id) continue;
+          this.addRemote(entry);
+        }
+        for (const ev of msg.props) this.applyRemoteProp(ev, true);
+        this.hud.showMessage('You have joined the battle. Gute Jagd!');
+        break;
+      }
+
+      case 'join':
+        if (msg.entry.id !== this.netId) {
+          this.addRemote(msg.entry);
+          if (!msg.entry.ai) this.hud.addKillFeed(`${msg.entry.name} joined the battle`);
+        }
+        break;
+
+      case 'leave':
+        this.removeRemote(msg.id);
+        this.hud.addKillFeed(`${msg.name} left`);
+        break;
+
+      case 'snap':
+        for (const st of msg.s) {
+          if (st.id === this.netId) continue;
+          this.remotes.get(st.id)?.push(msg.time, st);
+        }
+        break;
+
+      case 'fire': {
+        if (msg.id === this.netId) break;
+        this.tmpV.set(msg.p[0], msg.p[1], msg.p[2]);
+        this.tmpV2.set(msg.d[0], msg.d[1], msg.d[2]);
+        this.projectiles.fireShellVisual(this.tmpV, this.tmpV2, msg.mv);
+        const r = this.remotes.get(msg.id);
+        this.audio.playCannon(r ? r.spec.gun.sound : 'kwk36', this.tmpV);
+        this.tmpV3.copy(this.tmpV2);
+        this.particles.muzzleBlast(this.tmpV, this.tmpV3);
+        break;
+      }
+
+      case 'hit': {
+        this.tmpV.set(msg.point[0], msg.point[1], msg.point[2]);
+        if (msg.pen) this.audio.playPenetration(this.tmpV);
+        else this.audio.playRicochet(this.tmpV);
+        if (msg.pen) this.particles.explosion(this.tmpV, this.tmpV2.set(0, 1, 0));
+
+        if (msg.by === this.netId) {
+          this.hud.hitmarker(msg.killed ? 'kill' : msg.pen ? 'penetration' : 'ricochet');
+        }
+
+        if (msg.target === this.netId) {
+          const p = this.player!;
+          p.hp = msg.hp;
+          if (msg.pen) {
+            this.hud.damageFlash();
+            this.rig.addShake(0.7);
+          } else {
+            this.rig.addShake(0.3);
+          }
+          if (msg.killed && !p.destroyed) {
+            p.destroy();
+            this.audio.playExplosion(p.position);
+            this.wrecks.push({ tank: p, acc: 0, id: this.netId });
+            this.respawnAtLocal = performance.now() + 5000;
+          }
+        } else {
+          const r = this.remotes.get(msg.target);
+          if (r) {
+            r.hp = msg.hp;
+            if (msg.killed && r.alive) {
+              r.setDestroyed(true);
+              this.audio.playExplosion(r.position);
+              this.particles.explosion(this.tmpV2.copy(r.position).setY(r.position.y + 1), this.tmpV3.set(0, 1, 0));
+              this.wrecks.push({ tank: r, acc: 0, id: msg.target });
+              const row = this.scoreRows.get(msg.target);
+              if (row) row.alive = false;
+            }
+          }
+        }
+        break;
+      }
+
+      case 'spawn': {
+        // stop the old wreck burning
+        for (let i = this.wrecks.length - 1; i >= 0; i--) {
+          if (this.wrecks[i].id === msg.id) this.wrecks.splice(i, 1);
+        }
+        if (msg.id === this.netId) {
+          const p = this.player!;
+          p.revive();
+          p.placeAt(msg.x, msg.z, msg.yaw, this.ground);
+          this.hud.showRespawn(null);
+          this.hud.showMessage('Back in the fight!');
+        } else {
+          const r = this.remotes.get(msg.id);
+          if (r) {
+            r.setDestroyed(false);
+            r.hp = msg.hp;
+            const row = this.scoreRows.get(msg.id);
+            if (row) row.alive = true;
+          }
+        }
+        break;
+      }
+
+      case 'kill': {
+        const by = msg.by === this.netId ? 'You' : msg.byName;
+        const victim = msg.victim === this.netId ? 'You' : msg.victimName;
+        this.hud.addKillFeed(`${by}  ⚔  ${victim}`);
+        break;
+      }
+
+      case 'scores':
+        for (const sc of msg.s) {
+          const row = this.scoreRows.get(sc.id);
+          if (row) {
+            row.kills = sc.kills;
+            row.deaths = sc.deaths;
+          }
+        }
+        break;
+
+      case 'prop':
+        this.applyRemoteProp(msg, false);
+        break;
+    }
+  }
+
+  private applyRemoteProp(ev: PropEvent, silent: boolean): void {
+    if (ev.kind === 'tree') {
+      const t = this.props.trees[ev.index];
+      if (!t || t.state !== 0) return;
+      this.props.fellTree(ev.index, ev.dx, ev.dz);
+      if (silent) {
+        // late-join catch-up: skip straight to "down"
+        t.fallT = 1;
+      } else {
+        this.audio.playWoodCrack(this.rig.camera.position.distanceTo(this.tmpV.set(t.x, t.y, t.z)));
+      }
+    } else if (ev.kind === 'fence') {
+      const f = this.props.fences[ev.index];
+      if (!f || f.state !== 0) return;
+      this.props.breakFence(ev.index, ev.dx, ev.dz);
+      if (silent) f.fallT = 1;
+    } else {
+      const sh = this.props.sheds[ev.index];
+      if (!sh || !sh.intact) return;
+      this.tmpV.set(sh.x, sh.y + 1, sh.z);
+      if (silent) {
+        // no debris fireworks for history — just remove the building
+        for (const piece of this.props.shatterShed(ev.index, this.tmpV, 0.1)) {
+          piece.mesh.removeFromParent();
+        }
+      } else {
+        for (const piece of this.props.shatterShed(ev.index, this.tmpV, 16)) {
+          this.debris.add(piece.mesh, piece.vel);
+        }
+        this.audio.playCrash(this.rig.camera.position.distanceTo(this.tmpV));
+      }
+    }
+  }
+
+  /** One-sided separation: only the local body can be pushed. */
+  private separateFromGhost(player: Tank, ghost: RemoteTank): void {
+    const ra = (player.spec.hitbox.halfW + player.spec.hitbox.halfL) * 0.52;
+    const rb = (ghost.spec.hitbox.halfW + ghost.spec.hitbox.halfL) * 0.52;
+    const dx = player.position.x - ghost.position.x;
+    const dz = player.position.z - ghost.position.z;
+    const d = Math.hypot(dx, dz);
+    const overlap = ra + rb - d;
+    if (overlap <= 0 || d < 1e-4) return;
+    const b = player.physics.body;
+    const nx = dx / d;
+    const nz = dz / d;
+    b.force.x += nx * overlap * 2e6;
+    b.force.z += nz * overlap * 2e6;
+    const closing = b.velocity.x * -nx + b.velocity.z * -nz;
+    if (closing > 0) {
+      b.velocity.x += nx * closing * 0.9;
+      b.velocity.z += nz * closing * 0.9;
+      if (closing > 3) {
+        this.audio.playCrash(this.rig.camera.position.distanceTo(player.position));
+        this.rig.addShake(0.3);
+      }
+    }
+  }
+
+  private netFrame(dt: number): void {
+    const player = this.player!;
+    const net = this.net!;
+
+    if (this.input.wasPressed('KeyT') && !player.destroyed) player.physics.resetUpright();
+
+    this.rig.update(dt, this.input, player, this.ground);
+    this.audio.listener.copy(this.rig.camera.position);
+
+    const alive = !player.destroyed;
+    const coax = alive && this.input.coaxHeld && this.input.pointerLocked;
+    const hullMG = alive && this.input.hullMGHeld && this.input.pointerLocked;
+    player.update(
+      dt,
+      {
+        throttle: alive ? this.input.throttle : 0,
+        steer: alive ? this.input.steer : 0,
+        brake: this.input.brake || !alive,
+      },
+      this.rig.aimDir,
+      {
+        fireMain: alive && this.input.firePrimary && this.input.pointerLocked,
+        fireCoax: coax,
+        fireHullMG: hullMG,
+      },
+    );
+
+    // stream our state
+    this.stateAcc += dt;
+    if (this.stateAcc >= 1 / CLIENT_STATE_HZ && net.connected) {
+      this.stateAcc = 0;
+      const b = player.physics.body;
+      net.send({
+        t: 'st',
+        p: vec3(b.position),
+        q: quat(b.quaternion),
+        ty: +player.gun.turretYaw.toFixed(3),
+        gp: +player.gun.gunPitch.toFixed(3),
+        vl: +player.physics.trackSpeedLeft.toFixed(2),
+        vr: +player.physics.trackSpeedRight.toFixed(2),
+        mg: (coax ? 1 : 0) | (hullMG ? 2 : 0),
+      });
+    }
+
+    // remote ghosts: interpolate in the past
+    const renderTime = net.serverNow() - INTERP_DELAY_MS;
+    let nearest: RemoteTank | null = null;
+    let nearestD = Infinity;
+    for (const r of this.remotes.values()) {
+      r.update(dt, renderTime);
+      if (!player.destroyed && r.alive) this.separateFromGhost(player, r);
+      const marks = this.remoteMarks.get(r.netId);
+      if (marks) this.updateGhostMarks(r, marks, dt);
+      const d = r.position.distanceTo(this.rig.camera.position);
+      if (r.alive && d < nearestD) {
+        nearestD = d;
+        nearest = r;
+      }
+    }
+
+    this.interactProps(player, true);
+    if (this.playerMarks) this.updateTrackMarks(player, this.playerMarks, dt);
+
+    this.props.update(dt);
+    this.targets.update(dt);
+    this.projectiles.update(dt);
+    this.particles.update(dt);
+    this.debris.update(dt);
+    this.updateWrecks(dt);
+    this.env.update(this.rig.camera.position, player.position);
+
+    this.audio.update(
+      player.destroyed ? 0 : player.physics.engineLoad,
+      (player.physics.trackSpeedLeft + player.physics.trackSpeedRight) / 2,
+    );
+    this.audio.updateEnemy(
+      nearest ? nearestD : 9999,
+      nearest ? clamp(Math.max(Math.abs(nearest.speedL), Math.abs(nearest.speedR)) / 8, 0.15, 1) : 0,
+      !!nearest,
+    );
+
+    // respawn countdown
+    if (player.destroyed && this.respawnAtLocal > 0) {
+      this.hud.showRespawn((this.respawnAtLocal - performance.now()) / 1000);
+    }
+
+    // scoreboard on Tab
+    const tabDown = this.input.isDown('Tab');
+    this.hud.setScoreboardVisible(tabDown);
+    if (tabDown) {
+      const rows: ScoreRow[] = [];
+      for (const [id, r] of this.scoreRows) {
+        rows.push({ ...r, me: id === this.netId });
+      }
+      rows.sort((a, b) => b.kills - a.kills);
+      this.hud.setScoreboard(rows);
+    }
+
+    let humans = 0;
+    for (const r of this.scoreRows.values()) if (!r.ai) humans++;
+    this.hud.setOnlineCount(
+      net.connected ? `${humans}/${MAX_PLAYERS} ONLINE · ${net.rttMs.toFixed(0)} ms` : 'RECONNECTING…',
+    );
+
+    // HUD
+    player.gun.getGunAimPoint(400, this.gunAimPoint);
+    const hullYaw = Math.atan2(player.forward.x, player.forward.z);
+    const remoteMarkers: Array<{ x: number; z: number; alive: boolean }> = [];
+    for (const r of this.remotes.values()) {
+      remoteMarkers.push({ x: r.position.x, z: r.position.z, alive: r.alive });
+    }
+    this.hud.update(
+      dt,
+      {
+        speedKmh: player.physics.speedKmh,
+        engineLoad: player.physics.engineLoad,
+        ammo: player.gun.ammo,
+        reloadProgress: player.gun.reloadProgress,
+        tankPos: player.position,
+        hullYaw,
+        turretYaw: player.gun.turretYaw,
+        gunAimPoint: this.gunAimPoint,
+        sightMode: this.rig.sightMode,
+        locked: this.input.pointerLocked,
+        muted: this.audio.muted,
+        targets: this.targets.getMarkers(),
+        playerHp: player.hp,
+        playerMaxHp: player.spec.hp,
+        enemy: null,
+        remotes: remoteMarkers,
+      },
+      this.rig.camera,
+    );
+
+    this.renderer.render(this.scene, this.rig.camera);
+  }
+
+  private updateGhostMarks(ghost: RemoteTank, marks: TrackMarks, dt: number): void {
+    const moving = Math.max(Math.abs(ghost.speedL), Math.abs(ghost.speedR)) > 0.15;
+    const on = ghost.alive && moving;
+    const quatG = ghost.model.root.quaternion;
+    const centerL = this.tmpV.set(ghost.spec.trackCenterX, 0, 0).applyQuaternion(quatG).add(ghost.position);
+    const centerR = this.tmpV2.set(-ghost.spec.trackCenterX, 0, 0).applyQuaternion(quatG).add(ghost.position);
+    this.tmpV3.set(1, 0, 0).applyQuaternion(quatG);
+    this.tmpV3.y = 0;
+    this.tmpV3.normalize();
+    marks.update(dt, on, centerL, on, centerR, this.tmpV3);
   }
 
   private onResize(): void {

@@ -16,11 +16,31 @@
  * ------------------------------------------------------------------------ */
 
 import * as THREE from 'three';
-import { Tank } from '../tank/Tank';
-import { DriveInput } from '../tank/TankPhysics';
+import { TankSpec } from '../tank/config';
+import { DriveInput, TankPhysics } from '../tank/TankPhysics';
 import { GunTriggers } from '../tank/Gun';
 import { GroundLike } from '../world/Ground';
 import { angleDelta, clamp } from '../utils/math';
+
+/** What the AI needs from its own vehicle — satisfied by the client Tank
+ *  facade AND by the server's HeadlessTank. */
+export interface AITankLike {
+  spec: TankSpec;
+  position: THREE.Vector3;
+  forward: THREE.Vector3;
+  destroyed: boolean;
+  physics: TankPhysics;
+  hullQuaternion: THREE.Quaternion;
+  gunWorldDir(out: THREE.Vector3): THREE.Vector3;
+  gunReadiness: number;
+}
+
+/** What the AI needs to know about its target (may be a network shim). */
+export interface AITargetLike {
+  position: THREE.Vector3;
+  destroyed: boolean;
+  velocity: THREE.Vector3;
+}
 
 export interface AICommand {
   drive: DriveInput;
@@ -49,8 +69,8 @@ export class TankAI {
   private readonly goal = new THREE.Vector3();
 
   constructor(
-    private readonly self: Tank,
-    private readonly target: Tank,
+    private readonly self: AITankLike,
+    private target: AITargetLike,
     private readonly ground: GroundLike,
   ) {
     this.cmd = {
@@ -58,6 +78,11 @@ export class TankAI {
       aimDir: this.aimDir,
       triggers: { fireMain: false, fireCoax: false, fireHullMG: false },
     };
+  }
+
+  /** Switch to a different target (multiplayer: nearest player). */
+  setTarget(target: AITargetLike): void {
+    this.target = target;
   }
 
   update(dt: number): AICommand {
@@ -77,7 +102,7 @@ export class TankAI {
     const los = this.hasLineOfSight();
 
     // ---- rollover self-recovery (crew rocks the tank back onto its tracks) ----
-    this.upVec.set(0, 1, 0).applyQuaternion(this.self.model.root.quaternion);
+    this.upVec.set(0, 1, 0).applyQuaternion(this.self.hullQuaternion);
     if (this.upVec.y < 0.35) {
       this.flipTimer += dt;
       cmd.drive.throttle = 0;
@@ -164,8 +189,7 @@ export class TankAI {
     // ballistic solution with lead + drop (2 iterations)
     const mv = this.self.spec.gun.muzzleVelocity;
     this.gunPos.copy(this.self.position).setY(this.self.position.y + 1.6);
-    const b = this.target.physics.body;
-    this.targetVel.set(b.velocity.x, b.velocity.y, b.velocity.z);
+    this.targetVel.copy(this.target.velocity);
     this.aimPos.copy(this.target.position).setY(this.target.position.y + 0.4);
     for (let k = 0; k < 2; k++) {
       const d = this.aimPos.distanceTo(this.gunPos);
@@ -179,12 +203,12 @@ export class TankAI {
     this.aimDir.copy(this.aimPos).sub(this.gunPos).normalize();
 
     // fire when the barrel has settled on the solution
-    this.self.model.recoilGroup.getWorldDirection(this.gunDir);
+    this.self.gunWorldDir(this.gunDir);
     const aimErr = this.gunDir.angleTo(this.aimDir);
     const steady = ai.keepMoving || speed < 1.5;
     if (aimErr < 0.015 && los && steady && dist < ai.engageRange) {
       this.settleTimer += dt;
-      if (this.settleTimer > ai.reactionTime && this.self.gun.reloadProgress >= 1) {
+      if (this.settleTimer > ai.reactionTime && this.self.gunReadiness >= 1) {
         // per-shot dispersion, worse when moving
         const err = ai.aimError * (ai.keepMoving && speed > 2 ? 2.2 : 1);
         this.aimDir.x += gauss() * err;

@@ -21,17 +21,9 @@ import { Projectiles } from '../effects/Projectiles';
 import { AudioManager } from '../audio/AudioManager';
 import { clamp } from '../utils/math';
 
-export type HitFacet =
-  | 'hullFront' | 'hullSide' | 'hullRear'
-  | 'turretFront' | 'turretSide' | 'turretRear'
-  | 'top';
+import { intersectTankSegment, resolvePenetration, HitFacet, HitResult } from '../sim/hittest';
 
-export interface HitResult {
-  type: 'penetration' | 'ricochet';
-  facet: HitFacet;
-  destroyed: boolean;
-  damage: number;
-}
+export type { HitFacet, HitResult } from '../sim/hittest';
 
 export interface ShellMeta {
   shooter: Tank | null;
@@ -167,123 +159,32 @@ export class Tank {
   /* ------------------------------------------------------------------ */
 
   /**
-   * Swept-segment vs hull OBB + turret cylinder.
+   * Swept-segment vs hull OBB + turret cylinder (shared sim code).
    * Returns the world hit point and which armor facet was struck.
    */
   intersectSegment(a: THREE.Vector3, b: THREE.Vector3): { point: THREE.Vector3; facet: HitFacet } | null {
-    const hb = this.spec.hitbox;
-    this.tmpQ.copy(this.model.root.quaternion).invert();
-    this.localA.copy(a).sub(this.position).applyQuaternion(this.tmpQ);
-    this.localB.copy(b).sub(this.position).applyQuaternion(this.tmpQ);
-
-    // hull slab test (box: ±halfW, hullBottomY..hullTopY+turretH, ±halfL —
-    // the tall box includes the turret; facet is resolved afterwards)
-    const min = { x: -hb.halfW, y: hb.hullBottomY - 0.35, z: -hb.halfL };
-    const max = { x: hb.halfW, y: hb.hullTopY + hb.turretH, z: hb.halfL };
-    const d = this.localB.clone().sub(this.localA);
-    let tMin = 0;
-    let tMax = 1;
-    let entryAxis: 'x' | 'y' | 'z' = 'z';
-    for (const axis of ['x', 'y', 'z'] as const) {
-      const o = this.localA[axis];
-      const dd = d[axis];
-      const lo = min[axis];
-      const hi = max[axis];
-      if (Math.abs(dd) < 1e-9) {
-        if (o < lo || o > hi) return null;
-        continue;
-      }
-      let t1 = (lo - o) / dd;
-      let t2 = (hi - o) / dd;
-      if (t1 > t2) {
-        const tt = t1;
-        t1 = t2;
-        t2 = tt;
-      }
-      if (t1 > tMin) {
-        tMin = t1;
-        entryAxis = axis;
-      }
-      tMax = Math.min(tMax, t2);
-      if (tMin > tMax) return null;
-    }
-
-    const hitLocal = this.localA.clone().addScaledVector(d, tMin);
-
-    // above the hull roof? then it only counts if it strikes the turret
-    if (hitLocal.y > hb.hullTopY - 0.02) {
-      return this.turretIntersect(this.localA, d, hb);
-    }
-
-    // hull facet from the entered face + travel direction
-    let facet: HitFacet;
-    if (entryAxis === 'y') facet = 'top';
-    else if (entryAxis === 'x') facet = 'hullSide';
-    else facet = d.z < 0 ? 'hullFront' : 'hullRear';
-
-    const point = hitLocal.applyQuaternion(this.model.root.quaternion).add(this.position);
-    return { point, facet };
+    return intersectTankSegment(
+      a, b,
+      { position: this.position, quaternion: this.model.root.quaternion, turretYaw: this.gun.turretYaw },
+      this.spec.hitbox,
+    );
   }
 
-  /** Segment vs vertical turret cylinder; facet from approach direction. */
-  private turretIntersect(
-    a: THREE.Vector3,
-    d: THREE.Vector3,
-    hb: TankSpec['hitbox'],
-  ): { point: THREE.Vector3; facet: HitFacet } | null {
-    // march the local segment and find where it enters the cylinder
-    const steps = 14;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const x = a.x + d.x * t;
-      const y = a.y + d.y * t;
-      const z = a.z + d.z * t;
-      if (y < hb.hullTopY - 0.02 || y > hb.hullTopY + hb.turretH + 0.15) continue;
-      const dx = x;
-      const dz = z - hb.turretZ;
-      if (dx * dx + dz * dz > hb.turretR * hb.turretR) continue;
-
-      // impact direction relative to turret facing
-      const turretYaw = this.gun.turretYaw;
-      const dirYaw = Math.atan2(-d.x, -d.z); // where the shell CAME from, hull-local
-      let rel = dirYaw - turretYaw;
-      while (rel > Math.PI) rel -= Math.PI * 2;
-      while (rel < -Math.PI) rel += Math.PI * 2;
-      const absRel = Math.abs(rel);
-      const facet: HitFacet =
-        d.y < -0.55 * Math.hypot(d.x, d.z)
-          ? 'top'
-          : absRel < (65 * Math.PI) / 180
-            ? 'turretFront'
-            : absRel < (125 * Math.PI) / 180
-              ? 'turretSide'
-              : 'turretRear';
-
-      const point = new THREE.Vector3(x, y, z)
-        .applyQuaternion(this.model.root.quaternion)
-        .add(this.position);
-      return { point, facet };
-    }
-    return null;
-  }
-
-  /** Resolve a shell hit: penetration roll vs facet armor. */
+  /** Resolve a shell hit locally (singleplayer): penetration roll vs armor. */
   takeHit(meta: ShellMeta, facet: HitFacet, flightDist: number): HitResult {
-    const pen = Math.max(5, meta.pen0 - meta.penFalloff * flightDist);
-    const armor = this.spec.armor[facet];
-    const roll = pen * (0.88 + Math.random() * 0.24);
-
-    if (roll > armor && !this.destroyed) {
-      const dmg = meta.damage[0] + Math.random() * (meta.damage[1] - meta.damage[0]);
-      this.hp = Math.max(0, this.hp - dmg);
+    const res = resolvePenetration(this.spec, meta, facet, flightDist);
+    if (res.penetrated && !this.destroyed) {
+      this.hp = Math.max(0, this.hp - res.damage);
       const killed = this.hp <= 0;
       if (killed) this.destroy();
-      return { type: 'penetration', facet, destroyed: killed, damage: dmg };
+      return { type: 'penetration', facet, destroyed: killed, damage: res.damage };
     }
     return { type: 'ricochet', facet, destroyed: false, damage: 0 };
   }
 
-  private destroy(): void {
+  /** Mark destroyed (also used when the server says so in multiplayer). */
+  destroy(): void {
+    if (this.destroyed) return;
     this.destroyed = true;
     // burnt-out look: darken this tank's material set
     for (const mat of Object.values(this.materials)) {
@@ -291,6 +192,41 @@ export class Tank {
       m.color.multiplyScalar(0.32);
       m.roughness = 1;
     }
+  }
+
+  /** Undo destroy() for a multiplayer respawn. */
+  revive(): void {
+    if (this.destroyed) {
+      for (const mat of Object.values(this.materials)) {
+        const m = mat as THREE.MeshStandardMaterial;
+        m.color.multiplyScalar(1 / 0.32);
+        m.roughness = m.roughness === 1 ? 0.8 : m.roughness;
+      }
+    }
+    this.destroyed = false;
+    this.hp = this.spec.hp;
+  }
+
+  /* ---- adapters used by the AI and the shared turret sim ---- */
+
+  private readonly velVec = new THREE.Vector3();
+
+  /** Hull velocity as a THREE vector (AITargetLike). */
+  get velocity(): THREE.Vector3 {
+    const v = this.physics.body.velocity;
+    return this.velVec.set(v.x, v.y, v.z);
+  }
+
+  get hullQuaternion(): THREE.Quaternion {
+    return this.model.root.quaternion;
+  }
+
+  gunWorldDir(out: THREE.Vector3): THREE.Vector3 {
+    return this.model.recoilGroup.getWorldDirection(out);
+  }
+
+  get gunReadiness(): number {
+    return this.gun.reloadProgress;
   }
 
   /* ------------------------------------------------------------------ */

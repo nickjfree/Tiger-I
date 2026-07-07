@@ -38,8 +38,17 @@ export class Terrain {
     // blends into the surroundings.
     this.spawnHeight = this.rawHeight(0, 0);
 
-    this.mesh = this.buildMesh();
-    this.group.add(this.mesh);
+    if (!Terrain.headless) {
+      this.mesh = this.buildMesh();
+      this.group.add(this.mesh);
+    } else {
+      this.mesh = null as unknown as THREE.Mesh; // server never renders
+    }
+  }
+
+  /** True when running under Node (game server) — no DOM/canvas available. */
+  static get headless(): boolean {
+    return typeof document === 'undefined';
   }
 
   /* ------------------------------------------------------------------ */
@@ -107,10 +116,9 @@ export class Terrain {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
 
-    const detail = this.makeDetailTexture();
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true,
-      map: detail,
+      map: Terrain.headless ? null : this.makeDetailTexture(),
       roughness: 0.96,
       metalness: 0.0,
     });

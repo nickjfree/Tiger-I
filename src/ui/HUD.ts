@@ -24,6 +24,18 @@ export interface HUDState {
   playerHp: number;
   playerMaxHp: number;
   enemy: { x: number; z: number; alive: boolean; hp: number; maxHp: number; name: string } | null;
+  /** Multiplayer: all remote tanks for the minimap. */
+  remotes?: Array<{ x: number; z: number; alive: boolean }>;
+}
+
+export interface ScoreRow {
+  name: string;
+  tank: string;
+  kills: number;
+  deaths: number;
+  me: boolean;
+  ai: boolean;
+  alive: boolean;
 }
 
 const MAP_SIZE = 168;
@@ -61,6 +73,11 @@ export class HUD {
 
   private tickerTtl = 0;
   private helpVisible = true;
+
+  private killfeedEl!: HTMLElement;
+  private scoreboardEl!: HTMLElement;
+  private respawnEl!: HTMLElement;
+  private onlinePanel!: HTMLElement;
 
   private readonly proj = new THREE.Vector3();
 
@@ -109,6 +126,13 @@ export class HUD {
       </div>
 
       <div class="hud" id="ticker"></div>
+      <div class="hud" id="killfeed"></div>
+      <div class="hud hud-panel" id="scoreboard"><table><tbody id="score-rows"></tbody></table></div>
+      <div class="hud" id="respawn-overlay">
+        <div id="respawn-title">ABGESCHOSSEN</div>
+        <div id="respawn-sub"></div>
+      </div>
+      <div class="hud hud-panel" id="online-panel"></div>
 
       <div class="hud hud-panel" id="help-panel">
         <h3 id="help-title">CONTROLS</h3>
@@ -147,6 +171,10 @@ export class HUD {
     this.bannerEl = q('banner');
     this.mapCanvas = q('minimap');
     this.mapCtx = this.mapCanvas.getContext('2d')!;
+    this.killfeedEl = q('killfeed');
+    this.scoreboardEl = q('scoreboard');
+    this.respawnEl = q('respawn-overlay');
+    this.onlinePanel = q('online-panel');
 
     this.mapBase = this.renderMapBase();
   }
@@ -221,6 +249,51 @@ export class HUD {
   toggleHelp(): void {
     this.helpVisible = !this.helpVisible;
     this.helpPanel.style.display = this.helpVisible ? 'block' : 'none';
+  }
+
+  /** Multiplayer kill feed line (top-left, self-expiring). */
+  addKillFeed(text: string): void {
+    const line = document.createElement('div');
+    line.className = 'kf-line';
+    line.textContent = text;
+    this.killfeedEl.appendChild(line);
+    while (this.killfeedEl.children.length > 5) this.killfeedEl.firstChild?.remove();
+    setTimeout(() => line.classList.add('fade'), 4500);
+    setTimeout(() => line.remove(), 5600);
+  }
+
+  setScoreboardVisible(v: boolean): void {
+    this.scoreboardEl.style.display = v ? 'block' : 'none';
+  }
+
+  setScoreboard(rows: ScoreRow[]): void {
+    const tbody = this.scoreboardEl.querySelector('#score-rows') as HTMLElement;
+    tbody.innerHTML =
+      '<tr><th>COMMANDER</th><th>TANK</th><th>KILLS</th><th>DEATHS</th></tr>' +
+      rows
+        .map(
+          (r) =>
+            `<tr class="${r.me ? 'me' : ''}${r.alive ? '' : ' dead'}"><td>${escapeHtml(r.name)}${r.ai ? ' 🤖' : ''}</td>` +
+            `<td>${r.tank}</td><td>${r.kills}</td><td>${r.deaths}</td></tr>`,
+        )
+        .join('');
+  }
+
+  /** Respawn countdown overlay; pass null to hide. */
+  showRespawn(seconds: number | null): void {
+    if (seconds === null) {
+      this.respawnEl.style.display = 'none';
+      return;
+    }
+    this.respawnEl.style.display = 'block';
+    (this.respawnEl.querySelector('#respawn-sub') as HTMLElement).textContent =
+      `Respawn in ${Math.max(0, seconds).toFixed(0)}s`;
+  }
+
+  /** "N/8 ONLINE" pill; pass null to hide (singleplayer). */
+  setOnlineCount(text: string | null): void {
+    this.onlinePanel.style.display = text ? 'block' : 'none';
+    if (text) this.onlinePanel.textContent = text;
   }
 
   update(dt: number, s: HUDState, camera: THREE.PerspectiveCamera): void {
@@ -310,6 +383,19 @@ export class HUD {
       ctx.fill();
     }
 
+    // multiplayer: all remote tanks as red diamonds
+    if (s.remotes) {
+      for (const r of s.remotes) {
+        const [ex, ey] = toPx(r.x, r.z);
+        ctx.save();
+        ctx.translate(ex, ey);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = r.alive ? '#ff5040' : '#544f49';
+        ctx.fillRect(-3.4, -3.4, 6.8, 6.8);
+        ctx.restore();
+      }
+    }
+
     // enemy tank (red diamond)
     if (s.enemy) {
       const [ex, ey] = toPx(s.enemy.x, s.enemy.z);
@@ -348,4 +434,8 @@ export class HUD {
     ctx.strokeStyle = 'rgba(190,180,140,0.4)';
     ctx.strokeRect(0.5, 0.5, MAP_SIZE - 1, MAP_SIZE - 1);
   }
+}
+
+function escapeHtml(t: string): string {
+  return t.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c] as string);
 }

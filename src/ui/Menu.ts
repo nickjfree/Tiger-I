@@ -5,10 +5,15 @@
 
 import { TankSpec, SPECS } from '../tank/config';
 
+export type MenuChoice =
+  | { mode: 'sp'; spec: TankSpec }
+  | { mode: 'mp'; spec: TankSpec; name: string };
+
 export class Menu {
   private readonly root: HTMLDivElement;
+  private selected: 'tiger' | 't34' = 'tiger';
 
-  constructor(container: HTMLElement, onSelect: (spec: TankSpec) => void) {
+  constructor(container: HTMLElement, onSelect: (choice: MenuChoice) => void) {
     this.root = document.createElement('div');
     this.root.id = 'menu';
     this.root.innerHTML = /* html */ `
@@ -39,22 +44,49 @@ export class Menu {
             </ul>
           </div>
         </div>
-        <p class="menu-hint">First kill wins. Watch the minimap.</p>
+        <div id="menu-actions">
+          <button id="btn-sp">⚔ &nbsp;DUEL THE AI</button>
+          <div id="mp-row">
+            <input id="mp-name" maxlength="16" placeholder="Your name" />
+            <button id="btn-mp">🌐 &nbsp;JOIN ONLINE BATTLE</button>
+          </div>
+        </div>
+        <p class="menu-hint">Duel: first kill wins. Online: one room, 8 commanders + an AI prowler.</p>
       </div>
     `;
     container.appendChild(this.root);
 
-    this.root.querySelectorAll<HTMLElement>('.card').forEach((card) => {
-      card.addEventListener('click', () => {
-        const id = card.dataset.tank as 'tiger' | 't34';
-        this.hide();
-        onSelect(SPECS[id]);
-      });
+    const cards = this.root.querySelectorAll<HTMLElement>('.card');
+    const select = (id: 'tiger' | 't34'): void => {
+      this.selected = id;
+      cards.forEach((c) => c.classList.toggle('selected', c.dataset.tank === id));
+    };
+    cards.forEach((card) => {
+      card.addEventListener('click', () => select(card.dataset.tank as 'tiger' | 't34'));
     });
+    select('tiger');
+
+    const nameInput = this.root.querySelector('#mp-name') as HTMLInputElement;
+    nameInput.value = localStorage.getItem('panzer-name') ?? '';
+
+    (this.root.querySelector('#btn-sp') as HTMLElement).addEventListener('click', () => {
+      this.hide();
+      onSelect({ mode: 'sp', spec: SPECS[this.selected] });
+    });
+    (this.root.querySelector('#btn-mp') as HTMLElement).addEventListener('click', () => {
+      const name = nameInput.value.trim() || 'Kommandant';
+      localStorage.setItem('panzer-name', name);
+      this.hide();
+      onSelect({ mode: 'mp', spec: SPECS[this.selected], name });
+    });
+  }
+
+  /** Re-show after a failed connection. */
+  show(): void {
+    this.root.classList.remove('hidden');
   }
 
   private hide(): void {
     this.root.classList.add('hidden');
-    setTimeout(() => this.root.remove(), 600);
   }
 }

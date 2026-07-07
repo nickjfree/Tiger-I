@@ -26,9 +26,26 @@ generated in code.
 
 ```bash
 npm install
-npm run dev        # → http://localhost:5173
+npm run dev        # singleplayer dev → http://localhost:5173
 npm run build      # typecheck + production build in dist/
+
+# multiplayer (serves the built game + battle room on one port)
+npm run build && npm run server   # → http://localhost:8080
 ```
+
+## Multiplayer
+
+One shared battlefield, **up to 8 commanders + a resident AI tank** (doesn't
+count toward the limit, always prowling, respawns as the other vehicle).
+Pick a tank, enter a name, hit **JOIN ONLINE BATTLE**. Deathmatch scoring —
+hold `Tab` for the scoreboard; destroyed tanks respawn after 5 s.
+
+Architecture: your own tank is simulated locally (zero input latency);
+remote tanks are interpolated ghosts (~130 ms buffer) fed by 20 Hz snapshots;
+damage, kills, respawns and the AI are **server-authoritative**. The server
+(`server/`, plain Node + `ws`) runs the identical TypeScript physics, AI and
+armor model as the client — same seeded world, so only prop-destruction
+events and tank states cross the wire.
 
 ## Controls
 

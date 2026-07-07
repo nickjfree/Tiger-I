@@ -80,8 +80,11 @@ export class Props {
   private readonly fallAxis = new THREE.Vector3();
 
   constructor(private readonly terrain: Terrain) {
+    // headless (game server): geometry & placement must stay byte-identical
+    // to the client, only the canvas texture is skipped
     this.plankMat = new THREE.MeshStandardMaterial({
-      map: Props.makePlankTexture(),
+      map: typeof document === 'undefined' ? null : Props.makePlankTexture(),
+      color: typeof document === 'undefined' ? 0x7c6647 : 0xffffff,
       roughness: 0.9,
       metalness: 0,
     });
