@@ -5,3 +5,4 @@ dist/
 
 # local tooling config (machine-specific)
 .mcp.json
+server-build/

@@ -31,6 +31,10 @@ npm run build      # typecheck + production build in dist/
 
 # multiplayer (serves the built game + battle room on one port)
 npm run build && npm run server   # → http://localhost:8080
+
+# or in Docker (nothing but Docker required):
+docker build -t panzer-duel .
+docker run -p 8080:8080 panzer-duel     # or: docker compose up -d
 ```
 
 ## Multiplayer
