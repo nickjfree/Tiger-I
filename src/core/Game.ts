@@ -617,7 +617,7 @@ export class Game {
       existing.dispose(this.scene);
       this.remotes.delete(entry.id);
     }
-    const r = new RemoteTank(this.scene, entry.id, entry.name, entry.tank, this.particles);
+    const r = new RemoteTank(this.scene, entry.id, entry.name, entry.tank, this.particles, entry.ai);
     r.hp = entry.hp;
     r.push(0, entry.state);
     if (!entry.alive) r.setDestroyed(true);
@@ -905,7 +905,7 @@ export class Game {
     let nearest: RemoteTank | null = null;
     let nearestD = Infinity;
     for (const r of this.remotes.values()) {
-      r.update(dt, renderTime);
+      r.update(dt, renderTime, this.rig.camera.position);
       if (!player.destroyed && r.alive) this.separateFromGhost(player, r);
       const marks = this.remoteMarks.get(r.netId);
       if (marks) this.updateGhostMarks(r, marks, dt);

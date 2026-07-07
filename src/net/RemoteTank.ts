@@ -66,12 +66,15 @@ export class RemoteTank {
   private readonly tmp = new THREE.Vector3();
   private readonly tmpB = new THREE.Vector3();
 
+  private nameTag!: THREE.Sprite;
+
   constructor(
     scene: THREE.Scene,
     id: string,
     name: string,
     tank: TankId,
     private readonly particles: Particles,
+    readonly isAI = false,
   ) {
     this.netId = id;
     this.name = name;
@@ -86,6 +89,32 @@ export class RemoteTank {
     for (let i = 0; i < this.spec.wheelAxlesZ.length; i++) this.restWheelY.push(restY);
     for (const w of this.model.wheelsLeft) w.position.y = restY;
     for (const w of this.model.wheelsRight) w.position.y = restY;
+
+    this.buildNameTag();
+  }
+
+  /** Floating name above the turret (canvas sprite, occluded by terrain). */
+  private buildNameTag(): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 112;
+    const ctx = canvas.getContext('2d')!;
+    ctx.font = '600 52px "Segoe UI", Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 9;
+    ctx.strokeStyle = 'rgba(10,10,6,0.9)';
+    ctx.strokeText(this.name, 256, 58, 490);
+    ctx.fillStyle = this.isAI ? '#ffd27a' : '#f0ead0';
+    ctx.fillText(this.name, 256, 58, 490);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+    this.nameTag = new THREE.Sprite(mat);
+    this.nameTag.center.set(0.5, 0);
+    this.nameTag.position.set(0, this.spec.hullTopY + this.spec.hitbox.turretH + 1.15, 0);
+    this.model.root.add(this.nameTag);
   }
 
   /** Feed a snapshot (server time in ms). */
@@ -110,7 +139,14 @@ export class RemoteTank {
   }
 
   /** Advance to render time (server clock, ms). */
-  update(dt: number, renderTime: number): void {
+  update(dt: number, renderTime: number, cameraPos?: THREE.Vector3): void {
+    if (cameraPos) {
+      const d = cameraPos.distanceTo(this.position);
+      // roughly constant on-screen size, readable 8–320 m, hidden beyond
+      this.nameTag.visible = d < 320;
+      const s = Math.min(Math.max(d, 8), 220) * 0.028;
+      this.nameTag.scale.set(s * (512 / 112), s, 1);
+    }
     const buf = this.buffer;
     if (buf.length === 0) return;
 
@@ -180,6 +216,7 @@ export class RemoteTank {
   setDestroyed(destroyed: boolean): void {
     if (destroyed === !this.alive) return;
     this.alive = !destroyed;
+    this.nameTag.material.opacity = destroyed ? 0.35 : 1;
     for (const mat of Object.values(this.materials)) {
       const m = mat as THREE.MeshStandardMaterial;
       if (destroyed) {
