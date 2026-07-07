@@ -17,6 +17,7 @@ import { Targets } from '../world/Targets';
 import { Particles } from '../effects/Particles';
 import { Projectiles } from '../effects/Projectiles';
 import { Debris } from '../effects/Debris';
+import { CookOffs } from '../effects/CookOff';
 import { TrackMarks } from '../effects/TrackMarks';
 import { Tank } from '../tank/Tank';
 import { TankSpec, SPECS } from '../tank/config';
@@ -53,6 +54,7 @@ export class Game {
   private readonly particles: Particles;
   private readonly projectiles: Projectiles;
   private readonly debris: Debris;
+  private readonly cookoffs: CookOffs;
   private readonly hud: HUD;
   private readonly audio = new AudioManager();
 
@@ -110,6 +112,7 @@ export class Game {
 
     this.particles = new Particles(this.scene);
     this.debris = new Debris(this.scene, this.ground);
+    this.cookoffs = new CookOffs(this.scene, this.ground, this.particles, this.audio);
     this.projectiles = new Projectiles(this.scene, this.ground, this.targets, this.props, this.particles);
 
     this.hud = new HUD(container, this.terrain);
@@ -227,9 +230,16 @@ export class Game {
   }
 
   private onTankKilled(victim: Tank): void {
-    // kill explosion + start burning
+    // kill explosion + start burning + ammunition cook-off
     this.particles.explosion(victim.position.clone().setY(victim.position.y + 1), this.tmpV.set(0, 1, 0));
     this.audio.playExplosion(victim.position);
+    this.cookoffs.start(
+      victim === this.player ? 'player' : 'enemy',
+      victim.model.root,
+      victim.model.turretPivot,
+      victim.spec,
+      Math.random() < 0.45,
+    );
     this.wrecks.push({ tank: victim, acc: 0 });
     this.rig.addShake(clamp(30 / Math.max(8, victim.position.distanceTo(this.rig.camera.position)), 0, 1));
 
@@ -310,6 +320,7 @@ export class Game {
     this.projectiles.update(dt);
     this.particles.update(dt);
     this.debris.update(dt);
+    this.cookoffs.update(dt);
     this.updateWrecks(dt);
     this.env.update(this.rig.camera.position, player.position);
 
@@ -731,6 +742,7 @@ export class Game {
           if (msg.killed && !p.destroyed) {
             p.destroy();
             this.audio.playExplosion(p.position);
+            this.cookoffs.start(this.netId, p.model.root, p.model.turretPivot, p.spec, msg.damage % 2 === 0);
             this.wrecks.push({ tank: p, acc: 0, id: this.netId });
             this.respawnAtLocal = performance.now() + 5000;
           }
@@ -742,6 +754,7 @@ export class Game {
               r.setDestroyed(true);
               this.audio.playExplosion(r.position);
               this.particles.explosion(this.tmpV2.copy(r.position).setY(r.position.y + 1), this.tmpV3.set(0, 1, 0));
+              this.cookoffs.start(msg.target, r.model.root, r.model.turretPivot, r.spec, msg.damage % 2 === 0);
               this.wrecks.push({ tank: r, acc: 0, id: msg.target });
               const row = this.scoreRows.get(msg.target);
               if (row) row.alive = false;
@@ -752,7 +765,8 @@ export class Game {
       }
 
       case 'spawn': {
-        // stop the old wreck burning
+        // stop the old wreck burning + re-seat a tossed turret
+        this.cookoffs.stop(msg.id);
         for (let i = this.wrecks.length - 1; i >= 0; i--) {
           if (this.wrecks[i].id === msg.id) this.wrecks.splice(i, 1);
         }
@@ -924,6 +938,7 @@ export class Game {
     this.projectiles.update(dt);
     this.particles.update(dt);
     this.debris.update(dt);
+    this.cookoffs.update(dt);
     this.updateWrecks(dt);
     this.env.update(this.rig.camera.position, player.position);
 

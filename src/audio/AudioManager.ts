@@ -327,6 +327,18 @@ export class AudioManager {
     this.thump(52, 22, 0.9, 0.9 * a);
   }
 
+  /** Ammunition cooking off inside a wreck: sharp crack + muffled boom. */
+  playCookoff(pos: THREE.Vector3 | undefined, big: boolean): void {
+    const a = this.attenuation(pos);
+    if (big) {
+      this.burst({ duration: 1.2, gain: 0.8 * a, filterType: 'lowpass', freqStart: 1400, freqEnd: 80 });
+      this.thump(46, 24, 0.6, 0.7 * a);
+    } else {
+      this.burst({ duration: 0.35, gain: 0.5 * a, filterType: 'lowpass', freqStart: 1100, freqEnd: 140 });
+      this.burst({ duration: 0.08, gain: 0.4 * a, filterType: 'bandpass', freqStart: 2800, q: 2.5 });
+    }
+  }
+
   playReloadDone(): void {
     this.burst({ duration: 0.08, gain: 0.18, filterType: 'bandpass', freqStart: 2400, q: 4 });
     setTimeout(() => {

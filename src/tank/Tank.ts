@@ -144,8 +144,8 @@ export class Tank {
       this.wheelYRight,
     );
 
-    // 5. fire control
-    this.gun.update(dt, aimDir, triggers);
+    // 5. fire control (a dead tank's turret is frozen — or blown off)
+    if (!this.destroyed) this.gun.update(dt, aimDir, triggers);
 
     // 6. effects
     if (!this.destroyed) {

@@ -175,8 +175,10 @@ export class RemoteTank {
     this.forward.set(0, 0, 1).applyQuaternion(root.quaternion);
 
     this.turretYaw = lerpAngle(a.ty, b.ty, t);
-    this.model.turretPivot.rotation.y = this.turretYaw;
-    this.model.gunPivot.rotation.x = -lerpAngle(a.gp, b.gp, t);
+    if (this.alive) {
+      this.model.turretPivot.rotation.y = this.turretYaw;
+      this.model.gunPivot.rotation.x = -lerpAngle(a.gp, b.gp, t);
+    }
 
     this.speedL = lerp(a.vl, b.vl, t);
     this.speedR = lerp(a.vr, b.vr, t);
